@@ -88,7 +88,8 @@ def make_dataset(target: str, as_of: pd.Timestamp):
     """ElectionDataset that knows only what was public on `as_of`."""
     from src.data.dataset import ElectionDataset
 
-    # 2009 is not a production history date, but its results let 2011 be a backtest target
+    # 2009 is not a production history date. Its results let 2011 be a backtest target, and they
+    # are history for every later target too (from 55f2437): never mix runs from before and after.
     history = sorted(set(ElectionDataset.historical_election_dates) | {"2009-09-27"}, reverse=True)
     past = [d for d in history if pd.Timestamp(d) < pd.Timestamp(target)]
 
