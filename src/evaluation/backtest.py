@@ -233,6 +233,9 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
     yd = district[E].values
     S = pred_nat.shape[0]
     mean = pred_nat.mean(0)
+    # Parties that were not on the ballot (Chega and IL in 2015) are left out of every metric:
+    # a forecast of ~0 for them is right by construction and would only dilute the averages.
+    ran = y > 0
     rows = []
     for j, p in enumerate(PARTIES):
         lo50, hi50 = np.quantile(pred_nat[:, j], [0.25, 0.75])
@@ -240,6 +243,7 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
         rows.append(
             dict(
                 party=p,
+                ran=bool(ran[j]),
                 true=y[j] * 100,
                 mean=mean[j] * 100,
                 err=(mean[j] - y[j]) * 100,
@@ -266,20 +270,23 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
     winner_true = int(np.argmax(true_tot))
     winners = np.argmax(tot + 1e-3 * pred_dist.sum(1), axis=1)  # tie-break by votes
     vote_winner_true = int(np.argmax(y))
+    r = party["ran"].values
+    err = np.abs(mean - y)[ran]
+    big = [PARTIES.index(p) for p in ["PS", "AD", "CH"] if ran[PARTIES.index(p)]]
     summary = dict(
-        nat_mae=float(np.abs(mean - y).mean() * 100),
-        nat_mae_big=float(np.abs(mean - y)[[PARTIES.index(p) for p in ["PS", "AD", "CH"]]].mean() * 100),
-        nat_rmse=float(np.sqrt(((mean - y) ** 2).mean()) * 100),
-        nat_max_err=float(np.abs(mean - y).max() * 100),
-        nat_crps=float(party["crps"].mean()),
-        nat_cov50=float(party["in50"].mean()) if S > 1 else np.nan,
-        nat_cov90=float(party["in90"].mean()) if S > 1 else np.nan,
-        dist_mae=float(np.abs(pred_dist.mean(0) - yd).mean() * 100),
-        seat_mae=float(np.abs(tot.mean(0) - true_tot).mean()),
+        nat_mae=float(err.mean() * 100),
+        nat_mae_big=float(np.abs(mean - y)[big].mean() * 100),
+        nat_rmse=float(np.sqrt((err**2).mean()) * 100),
+        nat_max_err=float(err.max() * 100),
+        nat_crps=float(party.loc[r, "crps"].mean()),
+        nat_cov50=float(party.loc[r, "in50"].mean()) if S > 1 else np.nan,
+        nat_cov90=float(party.loc[r, "in90"].mean()) if S > 1 else np.nan,
+        dist_mae=float(np.abs(pred_dist.mean(0) - yd)[:, ran].mean() * 100),
+        seat_mae=float(np.abs(tot.mean(0) - true_tot)[ran].mean()),
         seat_abs_err_total=float(np.abs(tot.mean(0) - true_tot).sum() / 2),
         dist_seats_misallocated=float(np.abs(seat_draws_d - true_seats_d[None]).sum((1, 2)).mean() / 2),
-        seat_cov90=float(party["seats_in90"].mean()) if S > 1 else np.nan,
-        seat_logscore=float(party["seat_logscore"].mean()),
+        seat_cov90=float(party.loc[r, "seats_in90"].mean()) if S > 1 else np.nan,
+        seat_logscore=float(party.loc[r, "seat_logscore"].mean()),
         p_seat_winner=float((winners == winner_true).mean()),
         p_vote_winner=float((np.argmax(pred_nat, 1) == vote_winner_true).mean()),
     )
@@ -377,6 +384,38 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
     np.save(os.path.join(out_dir, f"{fit_name}__{target}__h{horizon:03d}__national.npy"), res["national"].astype(np.float32))
 
 
+def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFrame:
+    """Recompute party-level metrics over the parties on the ballot only (true share > 0).
+
+    Runs scored before this rule averaged over all 8 parties, which in 2015 included Chega and
+    IL (not on the ballot). The per-party rows hold everything needed; district MAE is rescaled
+    by 8 / parties on the ballot, exact when the absent parties were forecast at ~0.
+    """
+    out = df.copy()
+    keys = ["model", "election", "horizon"]
+    for i, row in out.iterrows():
+        sel = parties
+        for k in keys:
+            sel = sel[sel[k].astype(str) == str(row[k])]
+        sel = sel[sel["true"] > 0]
+        if sel.empty:
+            continue
+        n_all = len(PARTIES)
+        err = sel["err"].abs()
+        out.loc[i, "nat_mae"] = err.mean()
+        out.loc[i, "nat_rmse"] = float(np.sqrt((sel["err"] ** 2).mean()))
+        out.loc[i, "nat_max_err"] = err.max()
+        out.loc[i, "nat_crps"] = sel["crps"].mean()
+        for c_out, c_in in [("nat_cov50", "in50"), ("nat_cov90", "in90"), ("seat_cov90", "seats_in90")]:
+            if c_in in sel and sel[c_in].notna().any():
+                out.loc[i, c_out] = sel[c_in].astype(float).mean()
+        out.loc[i, "seat_mae"] = sel["seat_err"].abs().mean()
+        out.loc[i, "seat_logscore"] = sel["seat_logscore"].mean()
+        if "ran" not in parties.columns and len(sel) < n_all:
+            out.loc[i, "dist_mae"] = row["dist_mae"] * n_all / len(sel)
+    return out
+
+
 def summarise(out_dir: str) -> pd.DataFrame:
     rows = []
     for f in sorted(os.listdir(out_dir)):
@@ -386,14 +425,15 @@ def summarise(out_dir: str) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     if df.empty:
         return df
+    parties = pd.concat(
+        [pd.read_csv(os.path.join(out_dir, f)) for f in os.listdir(out_dir) if f.endswith("__parties.csv")]
+    )
+    df = rescore_ballot_parties(df, parties)
     df.to_csv(os.path.join(out_dir, "scores.csv"), index=False)
     cols = ["nat_mae", "nat_mae_big", "nat_crps", "nat_cov50", "nat_cov90", "dist_mae", "seat_mae",
             "dist_seats_misallocated", "seat_cov90", "seat_logscore", "p_seat_winner"]
     agg = df.groupby(["model", "horizon"])[cols].mean().round(3)
     agg.to_csv(os.path.join(out_dir, "scores_by_model_horizon.csv"))
-    parties = pd.concat(
-        [pd.read_csv(os.path.join(out_dir, f)) for f in os.listdir(out_dir) if f.endswith("__parties.csv")]
-    )
     parties.to_csv(os.path.join(out_dir, "parties.csv"), index=False)
     return agg
 

@@ -60,3 +60,23 @@ def test_backtest_dataset_has_no_future_information():
     dates = pd.to_datetime(ds.results_national["election_date"])
     assert dates.max() < pd.Timestamp("2024-03-10")
     assert pd.to_datetime(ds.results_mult_district["election_date"]).max() < pd.Timestamp("2024-03-10")
+
+
+def test_rescore_leaves_out_parties_not_on_the_ballot():
+    from src.evaluation.backtest import PARTIES, rescore_ballot_parties
+
+    rows = []
+    for p in PARTIES:
+        absent = p in ("CH", "IL")
+        rows.append(dict(model="m", election="2015-10-04", horizon=56, party=p,
+                         true=0.0 if absent else 10.0, err=0.0 if absent else 2.0,
+                         crps=0.0 if absent else 1.0, in50=not absent, in90=not absent,
+                         seats_in90=True, seat_err=0.0 if absent else 4.0, seat_logscore=1.0))
+    parties = pd.DataFrame(rows)
+    df = pd.DataFrame([dict(model="m", election="2015-10-04", horizon=56, nat_mae=1.5, dist_mae=0.75,
+                            nat_cov50=0.75, nat_cov90=0.75)])
+    out = rescore_ballot_parties(df, parties).iloc[0]
+    assert out["nat_mae"] == 2.0
+    assert out["nat_cov90"] == 1.0
+    assert out["seat_mae"] == 4.0
+    assert out["dist_mae"] == 0.75 * 8 / 6
