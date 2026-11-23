@@ -96,6 +96,12 @@ class DynamicGPElectionModel(BaseElectionModel):
         # not appeared yet), and a district result cell with zero votes (the party did not stand
         # there) is left out of the likelihood.
         self.mask_absent_parties = mask_absent_parties
+        # Election-level polling error added to forecast draws (sd of each party's shift on the
+        # log scale; 0 = off). The posterior alone covered the result for about half the parties
+        # in the backtest; see src/processing/polling_error.py. Set at prediction time.
+        self.polling_error_sd = 0.0
+        self.polling_error_seed = 20261123
+        self._polling_error_eps = {}
 
         # Configuration for the GPs
         self.baseline_gp_config = baseline_gp_config
@@ -1272,6 +1278,38 @@ class DynamicGPElectionModel(BaseElectionModel):
         print("Warning: predict_history not yet implemented/adapted for district model.")
         return az.InferenceData()
 
+    def apply_polling_error(self, shares: xr.DataArray) -> xr.DataArray:
+        """Add the election-level polling error to forecast shares.
+
+        shares has dims (chain, draw, ..., parties_complete). Every (chain, draw) gets one shift
+        per party, Normal(0, polling_error_sd) on the log scale, centred across the parties that
+        exist; the same shifts are reused for every call with the same chain/draw/party sizes,
+        so national and district forecasts move together draw by draw.
+        """
+        sd = float(getattr(self, "polling_error_sd", 0.0) or 0.0)
+        if sd <= 0 or shares is None:
+            return shares
+        if not hasattr(self, "_polling_error_eps"):
+            self._polling_error_eps = {}
+        n_chain, n_draw, n_party = shares.sizes["chain"], shares.sizes["draw"], shares.sizes["parties_complete"]
+        other = [d for d in shares.dims if d not in ("chain", "draw", "parties_complete")]
+        alive = (shares.mean(dim=["chain", "draw"] + other) > 1e-4).values
+        key = (n_chain, n_draw, n_party, sd, tuple(alive))
+        if key not in self._polling_error_eps:
+            rng = np.random.default_rng(getattr(self, "polling_error_seed", 20261123))
+            eps = rng.normal(0.0, sd, (n_chain, n_draw, n_party)) * alive
+            eps[..., alive] -= eps[..., alive].mean(-1, keepdims=True)
+            self._polling_error_eps[key] = eps
+        eps = xr.DataArray(
+            self._polling_error_eps[key],
+            dims=("chain", "draw", "parties_complete"),
+            coords={"parties_complete": shares.coords["parties_complete"]},
+        )
+        logs = np.log(shares.clip(min=1e-300)) + eps
+        out = np.exp(logs - logs.max("parties_complete"))
+        out = out / out.sum("parties_complete")
+        return out.transpose(*shares.dims).assign_coords(shares.coords)
+
     def get_latent_popularity(self, idata: az.InferenceData, target_date: pd.Timestamp = None, date_mode: str = 'election_day', district: Optional[str] = None) -> Optional[xr.DataArray]:
         """
         Extracts the posterior distribution of latent popularity at a specific time point,
@@ -1408,7 +1446,7 @@ class DynamicGPElectionModel(BaseElectionModel):
 
 
                 print(f"Successfully calculated popularity adjusted for district '{district}'.")
-                return adjusted_popularity
+                return self.apply_polling_error(adjusted_popularity)
             
             except KeyError as e:
                  print(f"Error accessing district data for '{district}': {e}"); return None
@@ -1418,7 +1456,7 @@ class DynamicGPElectionModel(BaseElectionModel):
         else:
             # Return the national popularity if no district was specified
             print("Returning national latent popularity (no district specified).")
-            return national_pop_at_date
+            return self.apply_polling_error(national_pop_at_date)
 
     def get_district_vote_share_posterior(self, idata: xr.Dataset, target_date: Optional[str] = None, date_mode: str = 'election_day') -> xr.DataArray:
         """Retrieve the posterior distribution of vote shares for all districts at a specific time point.
@@ -1488,13 +1526,13 @@ class DynamicGPElectionModel(BaseElectionModel):
         expected_dims = ('chain', 'draw', 'districts', 'parties_complete')
         if district_shares.dims == expected_dims:
              print(f"DEBUG: Retrieved district shares with expected dims {expected_dims}.")
-             return district_shares
+             return self.apply_polling_error(district_shares)
         else:
              # Attempt to transpose if dimensions are merely swapped, otherwise raise error
              print(f"Warning: Retrieved district shares have unexpected dims {district_shares.dims}. Expected {expected_dims}.")
              try:
                  transposed_shares = district_shares.transpose(*expected_dims)
                  print("DEBUG: Transposed shares to match expected dimensions.")
-                 return transposed_shares
+                 return self.apply_polling_error(transposed_shares)
              except ValueError as e:
                  raise ValueError(f"Could not transpose district shares to expected dimensions {expected_dims}. Error: {e}") from e

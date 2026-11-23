@@ -896,6 +896,10 @@ def predict(args):
         district_shares_posterior = None # For dynamic_gp model
         model_instance = elections_model.model_instance 
         hdi_prob = 0.94 
+        polling_error_sd = getattr(args, "polling_error_sd", 0.0) or 0.0
+        if polling_error_sd > 0 and hasattr(model_instance, "apply_polling_error"):
+            model_instance.polling_error_sd = polling_error_sd
+            print(f"Adding an election-level polling error of sd {polling_error_sd} (log scale) to the forecast draws.")
 
         # Determine which method to call based on the actual model instance type
         if isinstance(model_instance, DynamicGPElectionModel) and hasattr(model_instance, 'get_district_vote_share_posterior'):
@@ -1035,6 +1039,8 @@ def predict(args):
 
                     # Slice the posterior at this specific time point
                     national_summary_slice = national_trend_posterior.isel(calendar_time=closest_time_idx)
+                    if hasattr(model_instance, "apply_polling_error"):
+                        national_summary_slice = model_instance.apply_polling_error(national_summary_slice)
                     
                     # Define hdi_prob for az.summary, consistent with other uses
                     hdi_prob = 0.94 
@@ -1612,6 +1618,13 @@ def main(args=None):
         choices=['election_day', 'last_poll', 'today'],
         default='election_day',
         help="Specify which date's latent popularity to use for prediction (election day, last poll, or today). Default: election_day"
+    )
+    pred_group.add_argument(
+        "--polling-error-sd",
+        type=float,
+        default=0.0,
+        help="Election-level polling error added to the forecast draws: sd of each party's shift on the "
+        "log scale (0 = off). Calibrated by `python -m src.evaluation.backtest --calibrate`.",
     )
     pred_group.add_argument(
         "--skip-comparison-in-predict",
