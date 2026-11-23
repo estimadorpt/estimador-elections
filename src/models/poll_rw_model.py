@@ -69,6 +69,10 @@ class RWConfig:
     # the pilot (2025, h56) and the chains did not mix (OU rhat 1.09, Matern rhat 1.24), so the
     # backtest compares fixed timescales: 4 weeks primary, 2 and 8 as sensitivity.
     short_timescale_fixed: Optional[float] = None
+    # One short-term scale for all parties instead of one each. Per party, the scale of a fixed
+    # 4-week OU term did not mix at 1000/1000 (2025 h7: ESS 352 on sigma_short; most parties'
+    # 90% intervals reach down to ~0), so the pooled scale is tried once before giving up.
+    short_sd_shared: bool = False
 
 
 def short_term_process(eps, tau, dynamics: str, dt: float = 1.0):
@@ -267,7 +271,10 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
                 tau = pt.constant(float(cfg.short_timescale_fixed))
             else:
                 tau = pm.LogNormal("short_timescale", mu=np.log(cfg.short_timescale_weeks), sigma=cfg.short_timescale_logsd)
-            sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior, dims="parties")
+            if cfg.short_sd_shared:
+                sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior) * pt.ones(P)
+            else:
+                sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior, dims="parties")
             if cfg.dynamics == "rw_ou":
                 # static shape: JAX's scan needs a concrete length (dims alone are symbolic)
                 eps = pm.Normal("z_short", 0.0, 1.0, shape=(T, P), dims=("time", "parties"))

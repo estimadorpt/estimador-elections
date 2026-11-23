@@ -80,3 +80,10 @@ def test_fixed_timescale_is_not_a_free_variable():
     names = {v.name for v in model.free_RVs}
     assert "short_timescale" not in names and "sigma_short" in names
     assert np.isfinite(model.compile_logp()(model.initial_point()))
+
+
+def test_shared_short_scale_is_one_parameter():
+    model = build_rw_model(_toy_data(), RWConfig(dynamics="rw_ou", short_timescale_fixed=4.0, short_sd_shared=True))
+    sigma = [v for v in model.free_RVs if v.name == "sigma_short"][0]
+    assert model.initial_point()[model.rvs_to_values[sigma].name].shape == ()
+    assert np.isfinite(model.compile_logp()(model.initial_point()))

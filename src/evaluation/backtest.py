@@ -231,8 +231,12 @@ def run_rw(
         ss = idata.posterior["sigma_short"]
         # does the data want the term at all: its stationary sd against the HalfNormal prior
         # (prior median 0.674 * scale, prior 95% 1.96 * scale)
-        extra["sigma_short"] = ss.mean(("chain", "draw")).to_series().round(4).to_dict()
-        extra["sigma_short_q05_q95"] = {p: np.quantile(ss.sel(parties=p).values, [0.05, 0.95]).round(4).tolist() for p in ss["parties"].values}
+        if "parties" in ss.dims:
+            extra["sigma_short"] = ss.mean(("chain", "draw")).to_series().round(4).to_dict()
+            extra["sigma_short_q05_q95"] = {p: np.quantile(ss.sel(parties=p).values, [0.05, 0.95]).round(4).tolist() for p in ss["parties"].values}
+        else:
+            extra["sigma_short"] = round(float(ss.mean()), 4)
+            extra["sigma_short_q05_q95"] = np.quantile(ss.values, [0.05, 0.95]).round(4).tolist()
         extra["sigma_short_prior_median_q95"] = [round(0.674 * cfg.short_sd_prior, 4), round(1.96 * cfg.short_sd_prior, 4)]
         sd = az.summary(idata, var_names=["sigma_short"], kind="diagnostics")
         summary_extra.update(sigma_short_mean=float(ss.mean()), sigma_short_max_rhat=float(sd["r_hat"].max()),
@@ -509,6 +513,27 @@ FITS = {
     "dyn_ou2": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 2.0}, {"dyn_ou2": "blend_noise"}),
     "dyn_ou4": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 4.0}, {"dyn_ou4": "blend_noise"}),
     "dyn_ou8": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 8.0}, {"dyn_ou8": "blend_noise"}),
+    # one short-term scale shared by all parties (the per-party scales did not mix)
+    "dyn_ou4s": (
+        "rw",
+        {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 4.0, "short_sd_shared": True},
+        {"dyn_ou4s": "blend_noise"},
+    ),
+    "dyn_ou2s": (
+        "rw",
+        {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 2.0, "short_sd_shared": True},
+        {"dyn_ou2s": "blend_noise"},
+    ),
+    "dyn_ou8s": (
+        "rw",
+        {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 8.0, "short_sd_shared": True},
+        {"dyn_ou8s": "blend_noise"},
+    ),
+    "dyn_m32_4s": (
+        "rw",
+        {"bias_sd_prior": 1e-3, "dynamics": "rw_m32", "short_timescale_fixed": 4.0, "short_sd_shared": True},
+        {"dyn_m32_4s": "blend_noise"},
+    ),
     "dyn_m32_4": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_m32", "short_timescale_fixed": 4.0}, {"dyn_m32_4": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
