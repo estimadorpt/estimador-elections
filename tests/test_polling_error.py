@@ -40,8 +40,12 @@ def test_bloc_swing_and_heavy_tails_keep_tau_as_the_sd_and_correlate_blocs():
     d_iid = np.log(add_polling_error(base, 0.2, np.random.default_rng(0))) - np.log(base)
     d_bloc = np.log(add_polling_error(base, 0.2, np.random.default_rng(0), bloc_rho=0.5, signs=signs)) - np.log(base)
     d_t = np.log(add_polling_error(base, 0.2, np.random.default_rng(0), df=5.0)) - np.log(base)
-    ps, ad = 0, 7
-    assert np.corrcoef(d_bloc[:, ps], d_bloc[:, ad])[0, 1] < np.corrcoef(d_iid[:, ps], d_iid[:, ad])[0, 1] - 0.3
+    ps, ch, ad = 0, 1, 7
+    corr = lambda d, i, j: np.corrcoef(d[:, i], d[:, j])[0, 1]
+    # renormalising already pulls big parties apart; the swing pulls blocs apart further ...
+    assert corr(d_bloc, ps, ad) < corr(d_iid, ps, ad) - 0.2
+    # ... and moves parties of one bloc together
+    assert corr(d_bloc, ch, ad) > corr(d_iid, ch, ad) + 0.3
     assert abs(d_t[:, ad].std() / d_iid[:, ad].std() - 1) < 0.05  # same sd ...
     kurt = lambda x: ((x - x.mean()) ** 4).mean() / x.var() ** 2
     assert kurt(d_t[:, ad]) > kurt(d_iid[:, ad]) + 1  # ... heavier tails
