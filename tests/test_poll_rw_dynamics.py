@@ -73,3 +73,10 @@ def test_short_term_models_sample_with_numpyro(dynamics):
     with model:
         idata = pm.sample(draws=20, tune=20, chains=1, nuts_sampler="numpyro", progressbar=False, random_seed=1)
     assert np.isfinite(idata.posterior["eta"].values).all()
+
+
+def test_fixed_timescale_is_not_a_free_variable():
+    model = build_rw_model(_toy_data(), RWConfig(dynamics="rw_ou", short_timescale_fixed=4.0))
+    names = {v.name for v in model.free_RVs}
+    assert "short_timescale" not in names and "sigma_short" in names
+    assert np.isfinite(model.compile_logp()(model.initial_point()))

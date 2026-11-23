@@ -204,8 +204,9 @@ def run_rw(
     idata = _sample(model, draws, tune, chains, seed, target_accept=0.9)
     nat = national_share_draws(idata, data)
     checked = ["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"]
+    learned_tau = cfg.dynamics != "rw" and "short_timescale" in idata.posterior
     if cfg.dynamics != "rw":
-        checked += ["short_timescale", "sigma_short"]
+        checked += ["sigma_short"] + (["short_timescale"] if learned_tau else [])
     diag = _diagnostics(idata, var_names=checked)
     bias = idata.posterior["bias"].mean(("chain", "draw")).to_pandas()
     extra = {
@@ -217,14 +218,28 @@ def run_rw(
     }
     summary_extra = {}
     if cfg.dynamics != "rw":
-        tau = idata.posterior["short_timescale"].values.ravel()
-        q = np.quantile(tau, [0.05, 0.5, 0.95])
-        prior = np.exp(np.log(cfg.short_timescale_weeks) + cfg.short_timescale_logsd * np.array([-1.645, 0.0, 1.645]))
-        extra["short_timescale_weeks"] = {"posterior_q05_q50_q95": q.round(2).tolist(), "prior_q05_q50_q95": prior.round(2).tolist()}
-        extra["sigma_short"] = idata.posterior["sigma_short"].mean(("chain", "draw")).to_series().round(4).to_dict()
-        summary_extra.update(short_timescale_q50=float(q[1]), short_timescale_q05=float(q[0]), short_timescale_q95=float(q[2]),
-                             sigma_short_mean=float(idata.posterior["sigma_short"].mean()))
-    summary_extra.update(future_poll_scores(idata, data, future_polls, seed))
+        import arviz as az
+
+        if learned_tau:
+            tau = idata.posterior["short_timescale"].values.ravel()
+            q = np.quantile(tau, [0.05, 0.5, 0.95])
+            prior = np.exp(np.log(cfg.short_timescale_weeks) + cfg.short_timescale_logsd * np.array([-1.645, 0.0, 1.645]))
+            extra["short_timescale_weeks"] = {"posterior_q05_q50_q95": q.round(2).tolist(), "prior_q05_q50_q95": prior.round(2).tolist()}
+            summary_extra.update(short_timescale_q05=float(q[0]), short_timescale_q50=float(q[1]), short_timescale_q95=float(q[2]))
+        else:
+            summary_extra.update(short_timescale_fixed=float(cfg.short_timescale_fixed))
+        ss = idata.posterior["sigma_short"]
+        # does the data want the term at all: its stationary sd against the HalfNormal prior
+        # (prior median 0.674 * scale, prior 95% 1.96 * scale)
+        extra["sigma_short"] = ss.mean(("chain", "draw")).to_series().round(4).to_dict()
+        extra["sigma_short_q05_q95"] = {p: np.quantile(ss.sel(parties=p).values, [0.05, 0.95]).round(4).tolist() for p in ss["parties"].values}
+        extra["sigma_short_prior_median_q95"] = [round(0.674 * cfg.short_sd_prior, 4), round(1.96 * cfg.short_sd_prior, 4)]
+        sd = az.summary(idata, var_names=["sigma_short"], kind="diagnostics")
+        summary_extra.update(sigma_short_mean=float(ss.mean()), sigma_short_max_rhat=float(sd["r_hat"].max()),
+                             sigma_short_min_ess=float(sd["ess_bulk"].min()))
+    fp = future_poll_scores(idata, data, future_polls, seed)
+    extra["post_polls"] = fp.pop("per_poll", [])
+    summary_extra.update(fp)
     return {"national": nat, "district": None, "diag": diag, "extra": extra, "summary_extra": summary_extra}
 
 
@@ -248,7 +263,7 @@ def future_poll_scores(idata, data, future: Optional[pd.DataFrame], seed: int = 
     from src.models.poll_rw_model import _to_grid_index
 
     if future is None or len(future) == 0:
-        return {"post_n_polls": 0}
+        return {"post_n_polls": 0, "per_poll": []}
     rng = np.random.default_rng(seed)
     post = idata.posterior.stack(s=("chain", "draw"))
     S = post.sizes["s"]
@@ -259,7 +274,7 @@ def future_poll_scores(idata, data, future: Optional[pd.DataFrame], seed: int = 
     conc = post["concentration_polls"].values[take]
     t_idx = _to_grid_index(future["date"], data.grid)
     counts = future[list(data.parties)].to_numpy(float)
-    crps, mae = [], []
+    crps, mae, per_poll = [], [], []
     for i in range(len(future)):
         rep = (counts[i] > 0) & data.exists[t_idx[i]]
         if rep.sum() < 2:
@@ -274,10 +289,16 @@ def future_poll_scores(idata, data, future: Optional[pd.DataFrame], seed: int = 
         g = rng.gamma(np.clip(conc[:, None] * p[:, rep], 1e-8, None))
         sim = rng.multinomial(n, g / g.sum(1, keepdims=True)) / n
         obs = counts[i, rep] / n
-        for j in range(rep.sum()):
-            crps.append(crps_sample(sim[:, j] * 100, obs[j] * 100))
-        mae.extend(np.abs(p[:, rep].mean(0) - obs) * 100)
-    return {"post_n_polls": int(len(future)), "post_poll_crps": float(np.mean(crps)), "post_poll_mae": float(np.mean(mae))}
+        c_i = [crps_sample(sim[:, j] * 100, obs[j] * 100) for j in range(rep.sum())]
+        m_i = list(np.abs(p[:, rep].mean(0) - obs) * 100)
+        crps.extend(c_i)
+        mae.extend(m_i)
+        # per poll, so models can be compared poll by poll (paired) later without refitting
+        per_poll.append(dict(date=str(pd.Timestamp(future["date"].iloc[i]).date()), pollster=str(future["pollster"].iloc[i]),
+                             n=n, crps=float(np.mean(c_i)), mae=float(np.mean(m_i))))
+    if not crps:
+        return {"post_n_polls": 0, "per_poll": []}
+    return {"post_n_polls": len(per_poll), "post_poll_crps": float(np.mean(crps)), "post_poll_mae": float(np.mean(mae)), "per_poll": per_poll}
 
 
 def run_poll_average(ds, target, window_days=21, min_polls=4) -> Dict:
@@ -481,8 +502,14 @@ FITS = {
     # opinion dynamics only (Nov 2026): bias form "none" (the live forecast's), the random walk
     # alone or plus a short mean-reverting term; dyn_rw is rw_nobias rerun alongside them
     "dyn_rw": ("rw", {"bias_sd_prior": 1e-3}, {"dyn_rw": "blend_noise"}),
+    # learned timescale (pilot only: did not mix)
     "dyn_ou": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou"}, {"dyn_ou": "blend_noise"}),
     "dyn_m32": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_m32"}, {"dyn_m32": "blend_noise"}),
+    # fixed timescales (weeks): ou4 primary, ou2/ou8 sensitivity, m32_4 smooth bumps
+    "dyn_ou2": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 2.0}, {"dyn_ou2": "blend_noise"}),
+    "dyn_ou4": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 4.0}, {"dyn_ou4": "blend_noise"}),
+    "dyn_ou8": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou", "short_timescale_fixed": 8.0}, {"dyn_ou8": "blend_noise"}),
+    "dyn_m32_4": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_m32", "short_timescale_fixed": 4.0}, {"dyn_m32_4": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
     "latest_per_firm": ("latest_per_firm", {}, {"latest_per_firm": "blend"}),

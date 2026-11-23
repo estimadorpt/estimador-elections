@@ -65,6 +65,10 @@ class RWConfig:
     short_timescale_weeks: float = 5.0
     short_timescale_logsd: float = 0.5
     short_sd_prior: float = 0.08  # HalfNormal scale of the short term's stationary sd (log-ratio)
+    # Fix the timescale (weeks) instead of learning it. Learned, it sank to about one grid step in
+    # the pilot (2025, h56) and the chains did not mix (OU rhat 1.09, Matern rhat 1.24), so the
+    # backtest compares fixed timescales: 4 weeks primary, 2 and 8 as sensitivity.
+    short_timescale_fixed: Optional[float] = None
 
 
 def short_term_process(eps, tau, dynamics: str, dt: float = 1.0):
@@ -259,7 +263,10 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         if cfg.dynamics == "rw":
             eta = pm.Deterministic("eta", eta_rw, dims=("time", "parties"))
         else:
-            tau = pm.LogNormal("short_timescale", mu=np.log(cfg.short_timescale_weeks), sigma=cfg.short_timescale_logsd)
+            if cfg.short_timescale_fixed is not None:
+                tau = pt.constant(float(cfg.short_timescale_fixed))
+            else:
+                tau = pm.LogNormal("short_timescale", mu=np.log(cfg.short_timescale_weeks), sigma=cfg.short_timescale_logsd)
             sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior, dims="parties")
             if cfg.dynamics == "rw_ou":
                 # static shape: JAX's scan needs a concrete length (dims alone are symbolic)
