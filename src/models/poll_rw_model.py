@@ -57,6 +57,10 @@ class RWConfig:
     poll_concentration_prior: tuple = (2.0, 0.01)  # Gamma(alpha, beta) for the DM concentration
     result_concentration: float = 20000.0  # national results: the walk passes through them
     entry_lead_days: int = 30  # a party "exists" this many days before its first non-zero share
+    # A weekly left-right swing shared by every party of a bloc, on top of each party's own step
+    # (HalfNormal scale of its weekly sd; 0 = independent parties). Blocs as in
+    # src.processing.polling_error.LEFT_RIGHT.
+    bloc_swing_sd_prior: float = 0.0
 
 
 @dataclass
@@ -192,6 +196,13 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         sigma_rw = pm.HalfNormal("sigma_rw", sigma=cfg.innovation_sd_prior, dims="parties")
         z = pm.Normal("z_rw", 0.0, 1.0, dims=("time", "parties"))
         steps = z * sigma_rw[None, :] * step_mask * np.sqrt(cfg.step_days / 7.0)
+        if cfg.bloc_swing_sd_prior > 0:
+            from src.processing.polling_error import bloc_signs
+
+            sigma_bloc = pm.HalfNormal("sigma_bloc", sigma=cfg.bloc_swing_sd_prior)
+            f = pm.Normal("z_bloc", 0.0, 1.0, dims="time")
+            signs = bloc_signs(data.parties)[None, :]
+            steps = steps + f[:, None] * sigma_bloc * signs * step_mask * np.sqrt(cfg.step_days / 7.0)
         eta = pm.Deterministic("eta", level0[None, :] + pt.cumsum(steps, axis=0), dims=("time", "parties"))
         log_mask_t = pt.as_tensor_variable(log_mask)
 
