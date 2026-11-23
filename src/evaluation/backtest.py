@@ -123,7 +123,11 @@ def _sample(model, draws, tune, chains, seed, target_accept=0.9, var_names=None)
 def _diagnostics(idata, var_names=None) -> Dict:
     import arviz as az
 
-    out = {"divergences": int(idata.sample_stats["diverging"].sum())}
+    st = idata.sample_stats
+    out = {"divergences": int(st["diverging"].sum())}
+    for key, name in (("step_size", "step_size"), ("tree_depth", "tree_depth"), ("n_steps", "n_steps")):
+        if key in st:
+            out[f"mean_{name}"] = float(st[key].mean())
     try:
         s = az.summary(idata, var_names=var_names, kind="diagnostics")
         out["max_rhat"] = float(s["r_hat"].max())
