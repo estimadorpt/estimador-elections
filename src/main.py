@@ -152,6 +152,12 @@ def fit_model(args):
              model_kwargs["hsgp_c"] = args.hsgp_c
              model_kwargs["hsgp_m_cycle"] = args.hsgp_m_cycle
              model_kwargs["hsgp_c_cycle"] = args.hsgp_c_cycle
+             # industry poll bias: one static vector (default), none, or per cycle
+             model_kwargs["use_poll_bias"] = not getattr(args, "no_poll_bias", False)
+             model_kwargs["poll_bias_per_cycle"] = bool(getattr(args, "poll_bias_per_cycle", False))
+             model_kwargs["poll_bias_mean_sd"] = float(getattr(args, "poll_bias_mean_sd", 0.05))
+             for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd"):
+                 config_to_save[key] = model_kwargs[key]
              config_to_save["baseline_gp_lengthscale"] = args.baseline_gp_lengthscale
              config_to_save["baseline_gp_kernel"] = args.baseline_gp_kernel
              config_to_save["cycle_gp_lengthscale"] = args.cycle_gp_lengthscale
@@ -483,6 +489,12 @@ def load_model(args, directory, election_date=None, baseline_timescales=None, el
             model_kwargs["hsgp_c"] = get_gp_param("hsgp_c", "hsgp_c")
             model_kwargs["hsgp_m_cycle"] = get_gp_param("hsgp_m_cycle", "hsgp_m_cycle")
             model_kwargs["hsgp_c_cycle"] = get_gp_param("hsgp_c_cycle", "hsgp_c_cycle")
+
+            # Model-structure options are read from the run's own config, so predict rebuilds the
+            # model that was trained (a run saved before they existed gets the defaults)
+            for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd"):
+                if key in loaded_config:
+                    model_kwargs[key] = loaded_config[key]
 
             # Remove None values so model defaults take over if nothing was specified/loaded
             model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
@@ -1613,6 +1625,24 @@ def main(args=None):
     )
     dynamic_gp_group.add_argument(
         "--hsgp-c-cycle", type=float, default=1.5, help="Expansion factor (c) for Cycle HSGP"
+    )
+    dynamic_gp_group.add_argument(
+        "--no-poll-bias",
+        action="store_true",
+        help="Drop the industry poll bias (one party vector shared by every cycle since 2009). House "
+        "effects stay; use predict --polling-error-sd for the election-level uncertainty.",
+    )
+    dynamic_gp_group.add_argument(
+        "--poll-bias-per-cycle",
+        action="store_true",
+        help="Industry bias per cycle: a mean with a fixed tight prior (--poll-bias-mean-sd) plus a "
+        "per-cycle deviation with a learned sd, which also widens the forecast.",
+    )
+    dynamic_gp_group.add_argument(
+        "--poll-bias-mean-sd",
+        type=float,
+        default=0.05,
+        help="Prior sd (logit scale) of the carried-over bias with --poll-bias-per-cycle; 0 carries nothing over.",
     )
 
     # --- Prediction Specific Arguments ---

@@ -63,6 +63,9 @@ class DynamicGPElectionModel(BaseElectionModel):
         mask_absent_parties: bool = True,
         pollster_concentration: bool = False,
         undecided_variance: bool = False,
+        use_poll_bias: bool = True,
+        poll_bias_per_cycle: bool = False,
+        poll_bias_mean_sd: float = 0.05,
         **kwargs
     ):
         """
@@ -107,6 +110,20 @@ class DynamicGPElectionModel(BaseElectionModel):
         #   undecided split is uncertain (allocation concentration kappa, Bon et al. 2019).
         self.pollster_concentration = pollster_concentration
         self.undecided_variance = undecided_variance
+        # * poll_bias_per_cycle: the industry bias of cycle c is mean + delta_c, the mean with a
+        #   fixed tight prior (poll_bias_mean_sd on the logit scale: it is the shrinkage) and
+        #   delta_c ~ N(0, sigma) with sigma learned from the past cycles. The forecast cycle's
+        #   delta has no result to pin it, so it widens the forecast by sigma: one model for a
+        #   bias that carries over and an election-level polling error. Without the option the
+        #   bias is one vector for every cycle since 2009 (sd learned, HalfNormal(0.1) prior).
+        #   poll_bias_mean_sd = 0 carries nothing over: no party-specific (e.g. Chega) correction,
+        #   only the symmetric per-cycle error.
+        self.poll_bias_per_cycle = poll_bias_per_cycle
+        # use_poll_bias=False drops the industry bias altogether (house effects, zero-sum across
+        # firms, stay): no party-specific correction such as Chega's; the forecast's election-level
+        # uncertainty then comes from predict --polling-error-sd.
+        self.use_poll_bias = use_poll_bias
+        self.poll_bias_mean_sd = poll_bias_mean_sd
         # Election-level polling error added to forecast draws (sd of each party's shift on the
         # log scale; 0 = off). The posterior alone covered the result for about half the parties
         # in the backtest; see src/processing/polling_error.py. Set at prediction time.
@@ -693,9 +710,30 @@ class DynamicGPElectionModel(BaseElectionModel):
             # --- Average Poll Bias (Zero-Sum across parties) ---
             # Represents systematic relative over/underestimation in polls on average
             # REVERTED PRIOR: Loosen back to 0.1
-            sigma_poll_bias = pm.HalfNormal("sigma_poll_bias", 0.1) # Single sigma for overall magnitude
-            poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
-            poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * sigma_poll_bias, dims="parties_complete")
+            if not self.use_poll_bias:
+                poll_bias = pm.Deterministic("poll_bias", pt.zeros(len(self.political_families)), dims="parties_complete")
+                poll_bias_polls = poll_bias[None, :]
+            elif self.poll_bias_per_cycle:
+                if self.poll_bias_mean_sd > 0:
+                    poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
+                    poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * self.poll_bias_mean_sd, dims="parties_complete")
+                else:  # no bias carried from one cycle to the next: a symmetric election-level error only
+                    poll_bias = pm.Deterministic("poll_bias", pt.zeros(len(self.political_families)), dims="parties_complete")
+                sigma_poll_bias_cycle = pm.HalfNormal("sigma_poll_bias_cycle", 0.1)
+                poll_bias_cycle_raw = pm.ZeroSumNormal(
+                    "poll_bias_cycle_raw", sigma=1.0, dims=("election_cycles", "parties_complete"), n_zerosum_axes=1
+                )
+                poll_bias_cycle = pm.Deterministic(
+                    "poll_bias_cycle",
+                    poll_bias[None, :] + poll_bias_cycle_raw * sigma_poll_bias_cycle,
+                    dims=("election_cycles", "parties_complete"),
+                )
+                poll_bias_polls = poll_bias_cycle[data_containers["poll_cycle_idx"], :]
+            else:
+                sigma_poll_bias = pm.HalfNormal("sigma_poll_bias", 0.1) # Single sigma for overall magnitude
+                poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
+                poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * sigma_poll_bias, dims="parties_complete")
+                poll_bias_polls = poll_bias[None, :]
 
             # --------------------------------------------------------
             #          5. DISTRICT EFFECTS (Dynamic: Base Offset + Beta)
@@ -748,7 +786,7 @@ class DynamicGPElectionModel(BaseElectionModel):
             latent_polls = pm.Deterministic("latent_polls",
                                              national_trend_polls
                                              + house_effect_polls
-                                             + poll_bias[None, :] # Add poll_bias here
+                                             + poll_bias_polls # industry bias (per cycle with poll_bias_per_cycle)
                                              )
 
             if self.mask_unreported_parties:

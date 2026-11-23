@@ -176,7 +176,9 @@ def run_gp_current(
     pb = idata.posterior["poll_bias"].mean(("chain", "draw")).to_series().reindex(PARTIES).round(3).to_dict()
     extra = {"poll_bias": pb}
     post = idata.posterior
-    for name in ("concentration_polls", "sigma_pollster_concentration", "undecided_allocation_concentration"):
+    for name in (
+        "concentration_polls", "sigma_pollster_concentration", "undecided_allocation_concentration", "sigma_poll_bias_cycle"
+    ):
         if name in post:
             extra[name] = round(float(post[name].mean()), 3)
     if "pollster_concentration_raw" in post:
@@ -364,6 +366,18 @@ FITS = {
         "gp_current",
         {"mask_unreported_parties": True, "mask_absent_parties": True, "undecided_variance": True},
         {"gp_undecided": "model", "gp_undecided_blend": "blend_noise"},
+    ),
+    # industry bias = tight mean (sd 0.05) + per-cycle deviation with learned sd (rw_hybrid's form)
+    "gp_bias_cycle": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "poll_bias_per_cycle": True},
+        {"gp_bias_cycle": "model", "gp_bias_cycle_blend": "blend_noise"},
+    ),
+    # per-cycle deviation only, nothing carried over: no party-specific correction (owner's preference)
+    "gp_bias_cycle0": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "poll_bias_per_cycle": True, "poll_bias_mean_sd": 0.0},
+        {"gp_bias_cycle0": "model", "gp_bias_cycle0_blend": "blend_noise"},
     ),
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
