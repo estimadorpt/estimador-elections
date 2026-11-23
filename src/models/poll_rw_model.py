@@ -57,6 +57,69 @@ class RWConfig:
     poll_concentration_prior: tuple = (2.0, 0.01)  # Gamma(alpha, beta) for the DM concentration
     result_concentration: float = 20000.0  # national results: the walk passes through them
     entry_lead_days: int = 30  # a party "exists" this many days before its first non-zero share
+    # Opinion dynamics. "rw": the random walk alone. "rw_ou": plus a short Ornstein-Uhlenbeck
+    # term (Matern-1/2 GP: bumps that fade). "rw_m32": plus a short Matern-3/2 GP term (smooth
+    # bumps with momentum). The short term's timescale is learned; its prior keeps it short
+    # (median 5 weeks, 90% in about 2-11 weeks) so it cannot turn into a second random walk.
+    dynamics: str = "rw"
+    short_timescale_weeks: float = 5.0
+    short_timescale_logsd: float = 0.5
+    short_sd_prior: float = 0.08  # HalfNormal scale of the short term's stationary sd (log-ratio)
+
+
+def short_term_process(eps, tau, dynamics: str, dt: float = 1.0):
+    """Unit-variance stationary short-term process on a regular grid, exact discretisation.
+
+    eps: standard normal innovations, (T, P) for "rw_ou" or (T, 2, P) for "rw_m32";
+    tau: timescale in grid units of weeks (OU: correlation exp(-lag/tau); Matern-3/2 with
+    lengthscale tau: (1 + sqrt(3) lag/tau) exp(-sqrt(3) lag/tau)); dt: grid step in weeks.
+    Returns (T, P). Written with scan so the cost is linear in T (the HSGP approximation of
+    the GP model cannot resolve short timescales over a 16-year calendar).
+    """
+    import pytensor
+
+    eps = pt.as_tensor_variable(eps)
+    tau = pt.as_tensor_variable(tau)
+    if dynamics == "rw_ou":
+        phi = pt.exp(-dt / tau)
+        innov = pt.sqrt(1.0 - phi**2)
+        x0 = eps[0]
+        xs, _ = pytensor.scan(
+            lambda e, prev, phi, innov: phi * prev + innov * e,
+            sequences=eps[1:],
+            outputs_info=x0,
+            non_sequences=[phi, innov],
+        )
+        return pt.concatenate([x0[None, :], xs], axis=0)
+    if dynamics == "rw_m32":
+        lam = np.sqrt(3.0) / tau
+        a = lam * dt
+        e = pt.exp(-a)
+        a11, a12 = e * (1 + a), e * dt
+        a21, a22 = -e * lam**2 * dt, e * (1 - a)
+        # stationary covariance diag(1, lam^2); Q = Pinf - A Pinf A'
+        q11 = 1.0 - (a11**2 + lam**2 * a12**2)
+        q12 = -(a11 * a21 + lam**2 * a12 * a22)
+        q22 = lam**2 - (a21**2 + lam**2 * a22**2)
+        l11 = pt.sqrt(pt.maximum(q11, 1e-12))
+        l21 = q12 / l11
+        l22 = pt.sqrt(pt.maximum(q22 - l21**2, 1e-12))
+        f0 = eps[0, 0]
+        d0 = lam * eps[0, 1]
+
+        def step(e_t, f_prev, d_prev, a11, a12, a21, a22, l11, l21, l22):
+            f = a11 * f_prev + a12 * d_prev + l11 * e_t[0]
+            d = a21 * f_prev + a22 * d_prev + l21 * e_t[0] + l22 * e_t[1]
+            return f, d
+
+        (fs, _), _ = pytensor.scan(
+            step,
+            sequences=eps[1:],
+            outputs_info=[f0, d0],
+            non_sequences=[a11, a12, a21, a22, l11, l21, l22],
+        )
+        return pt.concatenate([f0[None, :], fs], axis=0)
+    raise ValueError(f"unknown short-term dynamics {dynamics!r}")
 
 
 @dataclass
@@ -192,7 +255,21 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         sigma_rw = pm.HalfNormal("sigma_rw", sigma=cfg.innovation_sd_prior, dims="parties")
         z = pm.Normal("z_rw", 0.0, 1.0, dims=("time", "parties"))
         steps = z * sigma_rw[None, :] * step_mask * np.sqrt(cfg.step_days / 7.0)
-        eta = pm.Deterministic("eta", level0[None, :] + pt.cumsum(steps, axis=0), dims=("time", "parties"))
+        eta_rw = level0[None, :] + pt.cumsum(steps, axis=0)
+        if cfg.dynamics == "rw":
+            eta = pm.Deterministic("eta", eta_rw, dims=("time", "parties"))
+        else:
+            tau = pm.LogNormal("short_timescale", mu=np.log(cfg.short_timescale_weeks), sigma=cfg.short_timescale_logsd)
+            sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior, dims="parties")
+            if cfg.dynamics == "rw_ou":
+                eps = pm.Normal("z_short", 0.0, 1.0, dims=("time", "parties"))
+            elif cfg.dynamics == "rw_m32":
+                model.add_coord("state", ["level", "slope"])
+                eps = pm.Normal("z_short", 0.0, 1.0, dims=("time", "state", "parties"))
+            else:
+                raise ValueError(f"unknown dynamics {cfg.dynamics!r}")
+            short = short_term_process(eps, tau, cfg.dynamics, dt=cfg.step_days / 7.0) * sigma_short[None, :]
+            eta = pm.Deterministic("eta", eta_rw + short, dims=("time", "parties"))
         log_mask_t = pt.as_tensor_variable(log_mask)
 
         # house effects: zero-sum over pollsters and over parties

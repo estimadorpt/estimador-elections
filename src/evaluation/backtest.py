@@ -191,7 +191,9 @@ def run_gp_current(
     return {"national": nat, "district": dist, "districts": districts, "diag": diag, "extra": extra}
 
 
-def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] = None) -> Dict:
+def run_rw(
+    ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] = None, future_polls: Optional[pd.DataFrame] = None
+) -> Dict:
     from src.models.poll_rw_model import RWConfig, build_rw_model, national_share_draws, prepare_rw_data
 
     cfg = RWConfig(**(cfg_overrides or {}))
@@ -201,7 +203,10 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     model = build_rw_model(data, cfg)
     idata = _sample(model, draws, tune, chains, seed, target_accept=0.9)
     nat = national_share_draws(idata, data)
-    diag = _diagnostics(idata, var_names=["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"])
+    checked = ["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"]
+    if cfg.dynamics != "rw":
+        checked += ["short_timescale", "sigma_short"]
+    diag = _diagnostics(idata, var_names=checked)
     bias = idata.posterior["bias"].mean(("chain", "draw")).to_pandas()
     extra = {
         "sigma_rw": idata.posterior["sigma_rw"].mean(("chain", "draw")).to_series().round(4).to_dict(),
@@ -210,7 +215,69 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
         "bias_by_cycle": {c: bias.loc[c].round(3).to_dict() for c in bias.index},
         "cfg": asdict(cfg),
     }
-    return {"national": nat, "district": None, "diag": diag, "extra": extra}
+    summary_extra = {}
+    if cfg.dynamics != "rw":
+        tau = idata.posterior["short_timescale"].values.ravel()
+        q = np.quantile(tau, [0.05, 0.5, 0.95])
+        prior = np.exp(np.log(cfg.short_timescale_weeks) + cfg.short_timescale_logsd * np.array([-1.645, 0.0, 1.645]))
+        extra["short_timescale_weeks"] = {"posterior_q05_q50_q95": q.round(2).tolist(), "prior_q05_q50_q95": prior.round(2).tolist()}
+        extra["sigma_short"] = idata.posterior["sigma_short"].mean(("chain", "draw")).to_series().round(4).to_dict()
+        summary_extra.update(short_timescale_q50=float(q[1]), short_timescale_q05=float(q[0]), short_timescale_q95=float(q[2]),
+                             sigma_short_mean=float(idata.posterior["sigma_short"].mean()))
+    summary_extra.update(future_poll_scores(idata, data, future_polls, seed))
+    return {"national": nat, "district": None, "diag": diag, "extra": extra, "summary_extra": summary_extra}
+
+
+def load_future_polls(target: str, as_of: pd.Timestamp) -> pd.DataFrame:
+    """Polls published after the cutoff and before election day (exit polls excluded)."""
+    ds_full = make_dataset(target, pd.Timestamp(target))
+    polls = ds_full.polls_train
+    d = pd.to_datetime(polls["date"])
+    return polls[(d > as_of) & (d < pd.Timestamp(target))].reset_index(drop=True)
+
+
+def future_poll_scores(idata, data, future: Optional[pd.DataFrame], seed: int = 0, n_draws: int = 400) -> Dict:
+    """Score a fit on the polls published after its cutoff: a test of the dynamics.
+
+    For each such poll, the predictive is the latent opinion at the poll's week plus the
+    pollster's house effect (zero for a pollster the fit has not seen) and the cycle bias,
+    with Dirichlet-multinomial poll noise at the fitted concentration and the poll's size,
+    over the parties the poll reported. post_poll_crps (pp) is a proper score; post_poll_mae
+    (pp) compares the latent mean (no noise) with the poll.
+    """
+    from src.models.poll_rw_model import _to_grid_index
+
+    if future is None or len(future) == 0:
+        return {"post_n_polls": 0}
+    rng = np.random.default_rng(seed)
+    post = idata.posterior.stack(s=("chain", "draw"))
+    S = post.sizes["s"]
+    take = rng.choice(S, size=min(n_draws, S), replace=False)
+    eta = post["eta"].transpose("s", "time", "parties").values[take]
+    house = post["house"].transpose("s", "pollsters", "parties").values[take]
+    bias = post["bias"].isel(cycles=-1).transpose("s", "parties").values[take]
+    conc = post["concentration_polls"].values[take]
+    t_idx = _to_grid_index(future["date"], data.grid)
+    counts = future[list(data.parties)].to_numpy(float)
+    crps, mae = [], []
+    for i in range(len(future)):
+        rep = (counts[i] > 0) & data.exists[t_idx[i]]
+        if rep.sum() < 2:
+            continue
+        logit = eta[:, t_idx[i], :] + bias
+        if future["pollster"].iloc[i] in data.pollsters:
+            logit = logit + house[:, data.pollsters.index(future["pollster"].iloc[i]), :]
+        logit = np.where(rep[None, :], logit, -np.inf)
+        p = np.exp(logit - logit.max(1, keepdims=True))
+        p /= p.sum(1, keepdims=True)
+        n = int(counts[i, rep].sum())
+        g = rng.gamma(np.clip(conc[:, None] * p[:, rep], 1e-8, None))
+        sim = rng.multinomial(n, g / g.sum(1, keepdims=True)) / n
+        obs = counts[i, rep] / n
+        for j in range(rep.sum()):
+            crps.append(crps_sample(sim[:, j] * 100, obs[j] * 100))
+        mae.extend(np.abs(p[:, rep].mean(0) - obs) * 100)
+    return {"post_n_polls": int(len(future)), "post_poll_crps": float(np.mean(crps)), "post_poll_mae": float(np.mean(mae))}
 
 
 def run_poll_average(ds, target, window_days=21, min_polls=4) -> Dict:
@@ -411,6 +478,11 @@ FITS = {
     ),
     # a learned mean bias that carries forward, plus a per-cycle deviation around it
     "rw_hybrid": ("rw", {"persistent_bias": True, "persistent_bias_sd": 0.3}, {"rw_hybrid": "blend_noise"}),
+    # opinion dynamics only (Nov 2026): bias form "none" (the live forecast's), the random walk
+    # alone or plus a short mean-reverting term; dyn_rw is rw_nobias rerun alongside them
+    "dyn_rw": ("rw", {"bias_sd_prior": 1e-3}, {"dyn_rw": "blend_noise"}),
+    "dyn_ou": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_ou"}, {"dyn_ou": "blend_noise"}),
+    "dyn_m32": ("rw", {"bias_sd_prior": 1e-3, "dynamics": "rw_m32"}, {"dyn_m32": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
     "latest_per_firm": ("latest_per_firm", {}, {"latest_per_firm": "blend"}),
@@ -429,7 +501,7 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
     if runner == "gp_current":
         res = run_gp_current(ds, target, draws, tune, chains, seed, **kwargs)
     elif runner == "rw":
-        res = run_rw(ds, target, draws, tune, chains, seed, kwargs)
+        res = run_rw(ds, target, draws, tune, chains, seed, kwargs, future_polls=load_future_polls(target, as_of))
     elif runner == "poll_average":
         res = run_poll_average(ds, target)
     elif runner == "last_result":
@@ -461,6 +533,7 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
             last_poll=str(pd.to_datetime(ds.polls_train["date"]).max().date()),
             seconds=fit_seconds,
             **{f"diag_{k}": v for k, v in res["diag"].items()},
+            **res.get("summary_extra", {}),
         )
         party.insert(0, "model", variant)
         party.insert(1, "election", target)
