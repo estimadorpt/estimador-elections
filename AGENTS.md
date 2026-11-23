@@ -159,7 +159,7 @@ Key model parameters:
 ### Data Sources
 
 The model integrates multiple data types:
-- Poll data: marktest_polls.csv (the history; last collected 18 Sep 2025, needs a manual Marktest login) plus wikipedia_legislative_polls.csv (every poll since the 18 May 2025 election, parsed from a verbatim snapshot in `data/wikipedia/` by `python -m src.data.wikipedia_polls <snapshot> data/wikipedia_legislative_polls.csv`). `ElectionDataset._load_polls` adds the Wikipedia polls the Marktest list lacks (same pollster, fieldwork end within 3 days = same poll), drops polls dated on an election day (exit polls) and counts a rolling tracker release (Pitagórica's weekly n=804) only by its new interviews. polls_renascenca.tsv and popstar_sondagens_data.csv are not loaded.
+- Poll data: marktest_polls.csv (the history; last collected 18 Sep 2025, needs a manual Marktest login) plus wikipedia_legislative_polls.csv (every poll since the 18 May 2025 election, parsed from a verbatim snapshot in `data/wikipedia/` by `python -m src.data.wikipedia_polls <snapshot> data/wikipedia_legislative_polls.csv`; set `ESTIMADOR_WIKIPEDIA_POLLS` to a fresher CSV with the same columns, such as the daily scrape's in estimador-data). `ElectionDataset._load_polls` adds the Wikipedia polls the Marktest list lacks (same pollster, fieldwork end within 3 days = same poll), drops polls dated on an election day (exit polls) and counts a rolling tracker release (Pitagórica's weekly n=804) only by its new interviews. polls_renascenca.tsv and popstar_sondagens_data.csv are not loaded.
 - Election results: legislativas_*.parquet files
 - Economic indicators: gdp.csv
 

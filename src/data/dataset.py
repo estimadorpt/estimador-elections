@@ -249,7 +249,11 @@ class ElectionDataset:
         Marktest list already holds. Exit polls are dropped.
         """
         polls_df = load_marktest_polls()
-        wikipedia_path = os.path.join(DATA_DIR, "wikipedia_legislative_polls.csv")
+        # ESTIMADOR_WIKIPEDIA_POLLS points at a fresher copy (the daily scrape in
+        # estimador-data writes the same columns); the committed CSV is the default.
+        wikipedia_path = os.environ.get("ESTIMADOR_WIKIPEDIA_POLLS") or os.path.join(
+            DATA_DIR, "wikipedia_legislative_polls.csv"
+        )
         if os.path.exists(wikipedia_path):
             polls_df = combine_poll_sources(polls_df, load_wikipedia_polls(wikipedia_path))
         polls_df = drop_election_day_polls(polls_df, self.historical_election_dates)

@@ -157,3 +157,14 @@ def test_ad_sums_every_list_it_ran_under(columns, expected):
     mapped = manager.map_election_data_columns(row, ["AD", "PS", "CDU"], election_type="parliamentary")
     assert mapped["AD"].iloc[0] == 10.0 * len(expected)
     assert mapped["CDU"].iloc[0] == 10.0  # one list, unchanged
+
+
+def test_env_var_points_the_dataset_at_another_csv(tmp_path, monkeypatch):
+    from src.data.dataset import ElectionDataset
+
+    fresher = pd.read_csv(CSV).iloc[:10]
+    path = tmp_path / "polls.csv"
+    fresher.to_csv(path, index=False)
+    monkeypatch.setenv("ESTIMADOR_WIKIPEDIA_POLLS", str(path))
+    dataset = ElectionDataset(election_date="2029-10-07", baseline_timescales=[365], election_timescales=[60])
+    assert dataset.polls["date"].max() == pd.to_datetime(fresher["fieldwork_end"]).max()
