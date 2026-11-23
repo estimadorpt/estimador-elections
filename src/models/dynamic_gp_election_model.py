@@ -1308,7 +1308,7 @@ class DynamicGPElectionModel(BaseElectionModel):
         logs = np.log(shares.clip(min=1e-300)) + eps
         out = np.exp(logs - logs.max("parties_complete"))
         out = out / out.sum("parties_complete")
-        return out.transpose(*shares.dims).assign_coords(shares.coords)
+        return out.transpose(*shares.dims).assign_coords(shares.coords).rename(shares.name)
 
     def get_latent_popularity(self, idata: az.InferenceData, target_date: pd.Timestamp = None, date_mode: str = 'election_day', district: Optional[str] = None) -> Optional[xr.DataArray]:
         """

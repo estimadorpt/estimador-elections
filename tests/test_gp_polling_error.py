@@ -20,6 +20,7 @@ def _national(n_chain=2, n_draw=500):
         np.broadcast_to(base, (n_chain, n_draw, 4)).copy(),
         dims=("chain", "draw", "parties_complete"),
         coords={"parties_complete": PARTIES},
+        name="latent_popularity_national",
     )
 
 
@@ -39,3 +40,4 @@ def test_national_and_district_draws_move_together():
     assert float(n2.sel(parties_complete="PAN").max()) < 1e-6  # absent party stays absent
     assert float(n2.sel(parties_complete="PS").std()) > 0.02
     assert d2.dims == dist.dims
+    assert n2.name == "latent_popularity_national"
