@@ -247,15 +247,15 @@ def flow_table(U: np.ndarray, rows, cols, pair: str, source: str, level: str, la
     return pd.DataFrame(out)
 
 
-def run_pair(blocs: pd.DataFrame, cats, a: int, b: int, method: str = "ipf_region"):
+def run_pair(blocs: pd.DataFrame, cats, a: int, b: int, method: str = "ipf_region", iters: int = 300):
     """Parish flows (n x J x K) for one pair with one estimator, plus the parish metadata and
     the country bounds."""
     X, Y, meta = pair_margins(blocs, a, b, cats)
     z = new_exit_zero(X.shape[1], Y.shape[1])
     if method == "ipf_region":
-        _, U, _ = ipf_em(X, Y, iters=300, groups=meta.eep_region.to_numpy(), zero=z)
+        _, U, _ = ipf_em(X, Y, iters=iters, sweeps=20, groups=meta.eep_region.to_numpy(), zero=z)
     elif method == "ipf_national":
-        _, U, _ = ipf_em(X, Y, iters=300, zero=z)
+        _, U, _ = ipf_em(X, Y, iters=iters, sweeps=20, zero=z)
     elif method == "lp_unit":
         _, U = unit_refine(X, Y, lphom(X, Y, z), iters=5, zero=z)
     else:
@@ -292,3 +292,54 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# --- Composition: vote and turnout by age or education from parish results (Censos 2021) ------
+AGE6 = {"18-24": ["15 - 19 anos", "20 - 24 anos"], "25-34": ["25 - 29 anos", "30 - 34 anos"],
+        "35-44": ["35 - 39 anos", "40 - 44 anos"], "45-54": ["45 - 49 anos", "50 - 54 anos"],
+        "55-64": ["55 - 59 anos", "60 - 64 anos"],
+        "65+": ["65 - 69 anos", "70 - 74 anos", "75 ou mais anos"]}
+EDU3 = {"below_secondary": ["1", "21", "22", "23"], "secondary": ["3", "4"],
+        "tertiary": ["51", "52", "53", "54", "55"]}
+
+
+def census_adults(ine_dir: str | Path, dim: str) -> pd.DataFrame:
+    """Parish residents aged 18 or over who are Portuguese citizens, by age band (``age``) or
+    education (``education``). 18-19 is taken as 2/5 of the 15-19 band; foreigners are removed
+    in proportion to the parish's foreign share (Censos 2021)."""
+    ine = Path(ine_dir)
+    d = pd.read_parquet(ine / "person_sex_age15_educ_2021.parquet")
+    d["v"] = d.value * np.where(d.age_15grp.astype(str) == "15 - 19 anos", 0.4, 1.0)
+    if dim == "age":
+        lab = {a: g for g, ages in AGE6.items() for a in ages}
+        d["g"] = d.age_15grp.astype(str).map(lab)
+    else:
+        lab = {c: g for g, codes in EDU3.items() for c in codes}
+        d["g"] = d.education_level_code.astype(str).map(lab)
+    t = d.pivot_table(index="freguesia", columns="g", values="v", aggfunc="sum").fillna(0)
+    t = t[list(AGE6 if dim == "age" else EDU3)]
+    nat = pd.read_parquet(ine / "person_sex_nationality_group_2021.parquet")
+    nat = nat.pivot_table(index="freguesia", columns="nationality_group", values="value", aggfunc="sum").fillna(0)
+    pt = (nat["PT"] / (nat["PT"] + nat["Foreign"]).clip(lower=1)).reindex(t.index).fillna(1)
+    return t.mul(pt, axis=0)
+
+
+def composition_margins(blocs: pd.DataFrame, year: int, adults: pd.DataFrame, cats):
+    """Rows: census groups scaled to the roll, plus GHOST (registered voters beyond the census's
+    adult citizens: emigrants still on the domestic roll, the dead not yet removed, people
+    registered where they no longer live), which can only abstain. Columns: the election's
+    categories. Returns X, Y, metadata, row names, structural-zero mask."""
+    B = blocs[blocs.year == year].set_index("code").sort_index()
+    A = adults.reindex(B.index).fillna(0)
+    reg = B.registered.to_numpy(float)
+    tot = A.sum(1).to_numpy()
+    scale = np.where(tot > reg, reg / np.maximum(tot, 1e-9), 1.0)
+    G = A.to_numpy() * scale[:, None]
+    ghost = reg - G.sum(1)
+    X = np.c_[G, np.clip(ghost, 0, None)]
+    Y = B[cats].to_numpy(float)
+    rows = list(A.columns) + ["GHOST"]
+    zero = np.zeros((len(rows), len(cats)), bool)
+    zero[-1, :] = True
+    zero[-1, cats.index("ABST")] = False
+    return X, Y, B.drop(columns=cats + ["year"]), rows, zero
