@@ -139,15 +139,21 @@ def _diagnostics(idata, var_names=None) -> Dict:
 
 
 def run_gp_current(
-    ds, target, draws, tune, chains, seed, mask_unreported_parties=False, mask_absent_parties=False
+    ds, target, draws, tune, chains, seed, mask_unreported_parties=False, mask_absent_parties=False, **model_kwargs
 ) -> Dict:
-    """The production DynamicGPElectionModel (both masks off reproduces it as of 22 Nov 2026)."""
+    """The production DynamicGPElectionModel (both masks off reproduces it as of 22 Nov 2026).
+
+    `model_kwargs` switch on the experimental options (pollster_concentration, undecided_variance).
+    """
     from scipy.special import softmax
     from src.models.dynamic_gp_election_model import DynamicGPElectionModel
 
     with contextlib.redirect_stdout(io.StringIO()):
         m = DynamicGPElectionModel(
-            ds, mask_unreported_parties=mask_unreported_parties, mask_absent_parties=mask_absent_parties
+            ds,
+            mask_unreported_parties=mask_unreported_parties,
+            mask_absent_parties=mask_absent_parties,
+            **model_kwargs,
         )
         model = m.build_model()
         exists_log = m._existence_log_mask() if mask_absent_parties else None
@@ -168,7 +174,15 @@ def run_gp_current(
     dist = softmax(trend[:, None, :] + off.values, axis=2)[:, :, order]
     diag = _diagnostics(idata, var_names=[v for v in free if "raw" not in v])
     pb = idata.posterior["poll_bias"].mean(("chain", "draw")).to_series().reindex(PARTIES).round(3).to_dict()
-    return {"national": nat, "district": dist, "districts": districts, "diag": diag, "extra": {"poll_bias": pb}}
+    extra = {"poll_bias": pb}
+    post = idata.posterior
+    for name in ("concentration_polls", "sigma_pollster_concentration", "undecided_allocation_concentration"):
+        if name in post:
+            extra[name] = round(float(post[name].mean()), 3)
+    if "pollster_concentration_raw" in post:
+        conc = post["concentration_polls"] * np.exp(post["sigma_pollster_concentration"] * post["pollster_concentration_raw"])
+        extra["pollster_concentration"] = conc.median(("chain", "draw")).to_series().round(1).to_dict()
+    return {"national": nat, "district": dist, "districts": districts, "diag": diag, "extra": extra}
 
 
 def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] = None) -> Dict:
@@ -202,6 +216,22 @@ def run_poll_average(ds, target, window_days=21, min_polls=4) -> Dict:
         recent = polls.tail(min_polls)
     shares = recent[PARTIES].div(recent[PARTIES].sum(1), axis=0).mean(0).values
     return {"national": shares[None, :], "district": None, "diag": {}, "extra": {"n_polls": int(len(recent))}}
+
+
+def run_latest_per_firm(ds, target, window_days=45, half_life_days=10.0) -> Dict:
+    """A poll-of-polls baseline: each firm's latest poll in the last `window_days`, weighted by
+    sqrt(sample size) and by recency (weight halves every `half_life_days`), so a firm that polls
+    every week counts once."""
+    polls = ds.polls_train.copy()
+    polls["date"] = pd.to_datetime(polls["date"])
+    last = polls["date"].max()
+    recent = polls[polls["date"] > last - pd.Timedelta(days=window_days)]
+    latest = recent.sort_values("date").groupby("pollster").tail(1)
+    age = (last - latest["date"]).dt.days.to_numpy(float)
+    w = np.sqrt(latest["sample_size"].to_numpy(float)) * 0.5 ** (age / half_life_days)
+    shares = latest[PARTIES].div(latest[PARTIES].sum(1), axis=0).to_numpy()
+    nat = (w[:, None] * shares).sum(0) / w.sum()
+    return {"national": nat[None, :], "district": None, "diag": {}, "extra": {"n_firms": int(len(latest))}}
 
 
 def run_last_result(ds, target) -> Dict:
@@ -324,6 +354,17 @@ FITS = {
         {"mask_unreported_parties": True, "mask_absent_parties": True},
         {"gp_masked": "model", "gp_masked_blend": "blend_noise"},
     ),
+    # experiments from the review (Nov 2026), each the masked GP plus one option
+    "gp_pconc": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "pollster_concentration": True},
+        {"gp_pconc": "model", "gp_pconc_blend": "blend_noise"},
+    ),
+    "gp_undecided": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "undecided_variance": True},
+        {"gp_undecided": "model", "gp_undecided_blend": "blend_noise"},
+    ),
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
     "rw_nobias": ("rw", {"bias_sd_prior": 1e-3}, {"rw_nobias": "blend_noise"}),
@@ -337,6 +378,7 @@ FITS = {
     "rw_hybrid": ("rw", {"persistent_bias": True, "persistent_bias_sd": 0.3}, {"rw_hybrid": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
+    "latest_per_firm": ("latest_per_firm", {}, {"latest_per_firm": "blend"}),
 }
 
 
@@ -357,6 +399,8 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
         res = run_poll_average(ds, target)
     elif runner == "last_result":
         res = run_last_result(ds, target)
+    elif runner == "latest_per_firm":
+        res = run_latest_per_firm(ds, target)
     else:
         raise ValueError(runner)
     fit_seconds = round(time.time() - t0, 1)

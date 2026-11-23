@@ -61,6 +61,8 @@ class DynamicGPElectionModel(BaseElectionModel):
         cycle_gp_max_days: int = 90,
         mask_unreported_parties: bool = True,
         mask_absent_parties: bool = True,
+        pollster_concentration: bool = False,
+        undecided_variance: bool = False,
         **kwargs
     ):
         """
@@ -96,6 +98,15 @@ class DynamicGPElectionModel(BaseElectionModel):
         # not appeared yet), and a district result cell with zero votes (the party did not stand
         # there) is left out of the likelihood.
         self.mask_absent_parties = mask_absent_parties
+        # Experiments from the November 2026 review, off by default (scored in
+        # src/evaluation/backtest.py before any becomes the default):
+        # * pollster_concentration: each firm gets its own Dirichlet-multinomial concentration,
+        #   log-normal around the shared one, so a noisy firm counts for less than a steady one;
+        # * undecided_variance: a poll's variance grows with its undecided share u (ERC deposits,
+        #   src/data/undecided.py): its shares rest on n(1 - u) decided respondents, and how the
+        #   undecided split is uncertain (allocation concentration kappa, Bon et al. 2019).
+        self.pollster_concentration = pollster_concentration
+        self.undecided_variance = undecided_variance
         # Election-level polling error added to forecast draws (sd of each party's shift on the
         # log scale; 0 = off). The posterior alone covered the result for about half the parties
         # in the backtest; see src/processing/polling_error.py. Set at prediction time.
@@ -466,6 +477,38 @@ class DynamicGPElectionModel(BaseElectionModel):
                 mask[:, j] = -30.0
         return mask
 
+    def _undecided_shares(self, polls: pd.DataFrame) -> np.ndarray:
+        """Undecided share (0-1) of each poll, from the ERC deposits (src/data/undecided.py)."""
+        from src.data.undecided import poll_undecided_shares
+
+        return poll_undecided_shares(polls)
+
+    def _poll_concentration(self, concentration_polls, data_containers, polls: pd.DataFrame = None):
+        """The Dirichlet-multinomial concentration of each poll: a scalar unless an experiment is on.
+
+        The variance of a poll's share is about p(1 - p) [1/n + 1/(a + 1)] for concentration a.
+        The undecided option adds u / (n (1 - u)) (the shares rest on decided respondents only) and
+        u^2 / (kappa + 1) (the undecided were split in an uncertain way) to the 1/(a + 1) term.
+        """
+        if not (self.pollster_concentration or self.undecided_variance):
+            return concentration_polls
+        conc = concentration_polls
+        if self.pollster_concentration:
+            sigma = pm.HalfNormal("sigma_pollster_concentration", sigma=0.5)
+            raw = pm.Normal("pollster_concentration_raw", 0.0, 1.0, dims="pollsters")
+            per_firm = pm.Deterministic(
+                "pollster_concentration", concentration_polls * pt.exp(sigma * raw), dims="pollsters"
+            )
+            conc = per_firm[data_containers["pollster_idx"]]
+        if self.undecided_variance:
+            data_polls = polls if polls is not None else self.polls_train
+            u = pm.Data("poll_undecided", self._undecided_shares(data_polls), dims="observations")
+            kappa = pm.Gamma("undecided_allocation_concentration", alpha=2.0, beta=0.02)
+            n = data_containers["observed_N_polls"]
+            inv = 1.0 / (conc + 1.0) + u / (n * (1.0 - u)) + pt.square(u) / (kappa + 1.0)
+            conc = 1.0 / inv - 1.0
+        return pt.shape_padright(conc)  # (observations, 1), broadcast over parties
+
     def build_model(self, polls: pd.DataFrame = None) -> pm.Model:
         """
         Build the PyMC model with three GPs over calendar time, house effects,
@@ -815,10 +858,11 @@ class DynamicGPElectionModel(BaseElectionModel):
             # WEAKENED PRIOR: Was pm.Gamma(100, 0.1), mean=1000
             # New prior: pm.Gamma(2, 0.01), mean=200, more variance
             concentration_polls = pm.Gamma("concentration_polls", alpha=2, beta=0.01) # Reintroduce concentration
+            poll_concentration = self._poll_concentration(concentration_polls, data_containers, polls)
             pm.DirichletMultinomial(
                 "poll_likelihood",
                 n=data_containers["observed_N_polls"],
-                a=concentration_polls * poll_probs,
+                a=poll_concentration * poll_probs,
                 observed=data_containers["observed_polls"],
                 dims=("observations", "parties_complete"),
             )
