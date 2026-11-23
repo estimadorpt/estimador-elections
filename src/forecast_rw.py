@@ -31,12 +31,13 @@ import pandas as pd
 
 # Election-level polling error (sd of a zero-sum log shift) for the random walk without an
 # industry bias, by days from the last poll to election day. Chosen leave one election out so
-# that the 90% interval of the other elections covers at least 85% of parties (WIP_grid_v1 on
-# the Mac, 2015-2025, rw_nobias; mean of the five held-out choices). Recalibrate with
+# that the 90% interval of the other elections covers at least 85% of parties (six elections,
+# 2011-2025, rw_nobias, calibrated at a179d7e; mean of the six held-out choices: 0.142, 0.150,
+# 0.192). The static form calibrates to the same values within 0.01. Recalibrate with
 # `python -m src.evaluation.backtest --calibrate DIR --models rw_nobias` after any model change.
 # Below 7 days the 7-day value is kept: the backtest has no shorter horizon, and polls stop
 # (blackout) before polling day.
-RW_NOBIAS_TAU = {7: 0.13, 28: 0.16, 56: 0.20}
+RW_NOBIAS_TAU = {7: 0.14, 28: 0.15, 56: 0.19}
 
 # The regular election falls in autumn 2029 (see CLAUDE.md); used only to build the dataset when
 # no target date is given.
@@ -46,6 +47,8 @@ BIAS_FORMS = {
     "none": {"bias_sd_prior": 1e-3},
     "per_cycle": {},
     "persistent": {"persistent_bias": True},
+    # one per-party bias shared by every cycle (backtest fit rw_static)
+    "static": {"persistent_bias": True, "persistent_bias_sd": 0.3, "bias_sd_prior": 1e-3},
 }
 
 
