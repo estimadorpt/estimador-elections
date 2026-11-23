@@ -416,6 +416,50 @@ def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFr
     return out
 
 
+def calibrate_polling_error(
+    out_dir: str,
+    models: Sequence[str] = ("gp_masked", "rw"),
+    horizon: int = 56,
+    taus: Sequence[float] = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4),
+    seed: int = 1,
+) -> pd.DataFrame:
+    """Score saved national draws with an added election-level polling error of each size.
+
+    Reads `<model>__<election>__h<horizon>__national.npy`, adds `add_polling_error(tau)`, derives
+    districts by blend swing with noise and rescores. Prints the mean over elections per tau and
+    a leave-one-election-out choice (tau picked by CRPS on the other elections).
+    """
+    from src.processing.polling_error import add_polling_error
+
+    district, national, seats_map = load_truth()
+    rng = np.random.default_rng(seed)
+    rows = []
+    for model in models:
+        for f in sorted(os.listdir(out_dir)):
+            if not (f.startswith(model + "__") and f.endswith(f"__h{horizon:03d}__national.npy")):
+                continue
+            E = f.split("__")[1]
+            nat0 = np.load(os.path.join(out_dir, f))
+            for tau in taus:
+                nat = add_polling_error(nat0, tau, rng)
+                summ, _ = score(nat, districts_from_national(nat, E, noise=True), E, seats_map)
+                rows.append(dict(model=model, election=E, horizon=horizon, tau=tau, **summ))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df.to_csv(os.path.join(out_dir, f"polling_error_h{horizon:03d}.csv"), index=False)
+    cols = ["nat_crps", "nat_cov50", "nat_cov90", "seat_cov90", "seat_logscore", "p_seat_winner"]
+    print(df.groupby(["model", "tau"])[cols].mean().round(3).to_string())
+    for model, d in df.groupby("model"):
+        picks = []
+        for E in d.election.unique():
+            t = d[d.election != E].groupby("tau").nat_crps.mean().idxmin()
+            picks.append(d[(d.election == E) & (d.tau == t)].assign(tau_chosen=t))
+        o = pd.concat(picks)
+        print(model, "leave-one-election-out tau:", list(o.tau_chosen), o[cols].mean().round(3).to_dict())
+    return df
+
+
 def summarise(out_dir: str) -> pd.DataFrame:
     rows = []
     for f in sorted(os.listdir(out_dir)):
@@ -490,11 +534,17 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=20261123)
     ap.add_argument("--out", default="outputs/backtest/WIP_backtest")
     ap.add_argument("--summarise", metavar="DIR")
+    ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
     ap.add_argument("--district-oracle", action="store_true")
     args = ap.parse_args(argv)
     if args.summarise:
         pd.set_option("display.width", 250)
         print(summarise(args.summarise).to_string())
+        return
+    if args.calibrate:
+        pd.set_option("display.width", 250)
+        for h in args.horizons:
+            calibrate_polling_error(args.calibrate, horizon=h)
         return
     if args.district_oracle:
         df = district_oracle()
