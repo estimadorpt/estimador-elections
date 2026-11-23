@@ -16,6 +16,8 @@ Usage
     python -m src.evaluation.backtest --models rw gp_current poll_average last_result \
         --elections 2015-10-04 2019-10-06 2022-01-30 2024-03-10 2025-05-18 \
         --horizons 56 28 7 --draws 500 --tune 500 --out outputs/backtest/WIP_run
+    # 2011-06-05 is also a valid target (2009 is its last result); it is not in the default list,
+    # so runs stay comparable with the five-election grids
     python -m src.evaluation.backtest --district-oracle   # swing rules given the true national result
     python -m src.evaluation.backtest --rescore-districts DIR   # rescore blend variants from saved draws
     python -m src.evaluation.backtest --summarise outputs/backtest/WIP_run
@@ -86,7 +88,9 @@ def make_dataset(target: str, as_of: pd.Timestamp):
     """ElectionDataset that knows only what was public on `as_of`."""
     from src.data.dataset import ElectionDataset
 
-    past = [d for d in ElectionDataset.historical_election_dates if pd.Timestamp(d) < pd.Timestamp(target)]
+    # 2009 is not a production history date, but its results let 2011 be a backtest target
+    history = sorted(set(ElectionDataset.historical_election_dates) | {"2009-09-27"}, reverse=True)
+    past = [d for d in history if pd.Timestamp(d) < pd.Timestamp(target)]
 
     class AsOfDataset(ElectionDataset):
         historical_election_dates = sorted(past, reverse=True)
