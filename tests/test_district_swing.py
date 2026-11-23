@@ -3,9 +3,12 @@ import numpy as np
 import pandas as pd
 
 from src.processing.district_swing import (
+    SQRT_NOISE_DEFAULT,
     add_district_noise,
+    add_sqrt_noise,
     blend_swing,
     calibrate_noise,
+    calibrate_sqrt_noise,
     dhondt_draws,
     seats_from_district_shares,
 )
@@ -58,6 +61,32 @@ def test_noise_keeps_simplex_and_zeroes():
     np.testing.assert_allclose(out.sum(-1), 1.0)
     assert (out[..., 2] == 0).all()
     assert out[..., 0].std() > 0.01
+
+
+def test_sqrt_noise_keeps_simplex_and_zeroes_and_scales_with_root_share():
+    shares = np.tile(np.array([[0.55, 0.3, 0.1, 0.04, 0.01, 0.0]]), (20000, 2, 1))
+    out = add_sqrt_noise(shares, 0.04, np.random.default_rng(0))
+    np.testing.assert_allclose(out.sum(-1), 1.0)
+    assert (out[..., 5] == 0).all()
+    sd = out[:, 0, :].std(0)
+    # a small party's sd is close to c * sqrt(mu) (renormalising mostly damps the big ones):
+    # a share 4 times smaller has an sd about half as large
+    assert abs(sd[3] - 0.04 * np.sqrt(0.04)) < 0.001
+    assert 0.4 < sd[4] / sd[3] < 0.6
+
+
+def test_calibrate_sqrt_noise_uses_only_earlier_elections():
+    parties = ["A", "B"]
+    d0, d1, d2, d3 = (pd.Timestamp(x) for x in ("2015-01-01", "2019-01-01", "2022-01-01", "2024-01-01"))
+    nat = {d: pd.Series([0.5, 0.5], index=parties) for d in (d0, d1, d2, d3)}
+    calm = pd.DataFrame([[0.6, 0.4], [0.4, 0.6]], columns=parties)
+    dist = {d0: calm, d1: calm, d2: calm, d3: pd.DataFrame([[0.9, 0.1], [0.1, 0.9]], columns=parties)}
+    grid = (0.01, 0.05, 0.2)
+    # before d3 nothing moved: the smallest c; with d3 in the history, a large one
+    assert calibrate_sqrt_noise(dist, nat, d3, [1, 1], grid) == 0.01
+    assert calibrate_sqrt_noise(dist, nat, pd.Timestamp("2030-01-01"), [1, 1], grid) > 0.01
+    # one election before the target is no pair at all
+    assert calibrate_sqrt_noise(dist, nat, d1, [1, 1], grid) == SQRT_NOISE_DEFAULT
 
 
 def test_calibrate_noise_uses_only_earlier_elections():
