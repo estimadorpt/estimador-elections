@@ -21,6 +21,28 @@ from src.evaluation.metrics import (
 )
 
 
+
+def hsgp_sqrt_psd(hsgp, kernel: str, amplitude, lengthscale, sqrt_psd_pymc):
+    """Square root of an HSGP's spectral density, with a finite gradient for ExpQuad.
+
+    PyMC returns sqrt(psd). For ExpQuad, psd = amp^2 * sqrt(2 pi) * ls * exp(-(ls * w)^2 / 2)
+    underflows to exactly 0 for the highest basis frequencies when the lengthscale is long
+    relative to the domain: in a 2015 backtest the baseline GP has ls ~ 1,460 days and
+    w_35 ~ 0.033, so the exponent is about -1,200. The gradient of sqrt at 0 is inf, times a
+    zero derivative gives NaN, and NUTS cannot start (step size 1e-233, every draw divergent).
+    Computing amp * exp(log(psd_unit) / 2) gives the same values and a zero gradient there.
+    Matern kernels have polynomial tails and keep PyMC's value.
+    """
+    if kernel != "ExpQuad":
+        return sqrt_psd_pymc
+    eigvals = pm.gp.hsgp_approx.calc_eigenvalues(hsgp.L, hsgp._m)
+    omega = pt.sqrt(eigvals)[:, 0]
+    log_psd_unit = 0.5 * np.log(2.0 * np.pi) + pt.log(lengthscale) - 0.5 * pt.square(lengthscale * omega)
+    sqrt_psd = amplitude * pt.exp(0.5 * log_psd_unit)
+    first = int(getattr(hsgp, "_drop_first", False) is True)
+    return sqrt_psd[first:]
+
+
 class DynamicGPElectionModel(BaseElectionModel):
     """
     A Bayesian election model combining a long-term baseline GP over calendar time
@@ -37,6 +59,8 @@ class DynamicGPElectionModel(BaseElectionModel):
         district_offset_sd_prior_scale: float = 0.1, # Adjusted default
         # beta_sd_prior_scale: float = 0.5, # NEW sensitivity parameter scale --- COMMENTED OUT
         cycle_gp_max_days: int = 90,
+        mask_unreported_parties: bool = True,
+        mask_absent_parties: bool = True,
         **kwargs
     ):
         """
@@ -59,6 +83,19 @@ class DynamicGPElectionModel(BaseElectionModel):
 
         # Max days before election for the cycle GP
         self.cycle_gp_max_days = cycle_gp_max_days
+        # A party with a zero in a poll was almost always not reported separately (PAN in 249
+        # polls of 2011-2018, Livre in 196 of 2015-2022, Chega and IL in 34 of 2019), not polled
+        # at 0%. When True those cells leave the poll's likelihood instead of pulling the party's
+        # trend toward zero and its poll_bias toward "polls underestimate it".
+        self.mask_unreported_parties = mask_unreported_parties
+        # A party that did not exist yet (Chega, IL and Livre before 2019, 2019 and 2015) has a
+        # zero in every earlier result. Read as support, those zeros pin its share to ~0 against
+        # millions of votes, which makes the posterior stiff and broke every backtest fit whose
+        # training data end before the party appeared. With this flag such parties are masked
+        # out of the softmax before their first appearance (and out of the forecast if they have
+        # not appeared yet), and a district result cell with zero votes (the party did not stand
+        # there) is left out of the likelihood.
+        self.mask_absent_parties = mask_absent_parties
 
         # Configuration for the GPs
         self.baseline_gp_config = baseline_gp_config
@@ -395,6 +432,34 @@ class DynamicGPElectionModel(BaseElectionModel):
         return data_containers
 
 
+    def _existence_log_mask(self, polls: pd.DataFrame = None, lead_days: int = 30) -> np.ndarray:
+        """(calendar_time, parties) log-weights: 0 once a party exists, -30 before.
+
+        A party exists from `lead_days` before its first non-zero share in a training poll or a
+        past national result. One never seen is masked over the whole calendar, so a forecast
+        made before a party appeared gives it no votes.
+        """
+        data_polls = polls if polls is not None else self.polls_train
+        results = self.dataset.results_national
+        dates = pd.to_datetime(pd.Index(self.coords["calendar_time"]))
+        mask = np.zeros((len(dates), len(self.political_families)))
+        for j, party in enumerate(self.political_families):
+            seen = []
+            if party in data_polls.columns:
+                nz = pd.to_datetime(data_polls.loc[data_polls[party] > 0, "date"])
+                if len(nz):
+                    seen.append(nz.min())
+            if results is not None and party in results.columns:
+                nz = pd.to_datetime(results.loc[results[party] > 0, "election_date"])
+                if len(nz):
+                    seen.append(nz.min())
+            if seen:
+                first = min(seen) - pd.Timedelta(days=lead_days)
+                mask[:, j] = np.where(dates >= first, 0.0, -30.0)
+            else:
+                mask[:, j] = -30.0
+        return mask
+
     def build_model(self, polls: pd.DataFrame = None) -> pm.Model:
         """
         Build the PyMC model with three GPs over calendar time, house effects,
@@ -437,6 +502,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_baseline, m=baseline_hsgp_m, c=baseline_hsgp_c
             )
             phi_baseline, sqrt_psd_baseline = self.gp_baseline_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_baseline = hsgp_sqrt_psd(
+                self.gp_baseline_time, self.baseline_gp_config["kernel"],
+                baseline_gp_amplitude_sd, baseline_gp_lengthscale, sqrt_psd_baseline,
+            )
 
             coord_name_gp_basis_base = "gp_basis_baseline"
             if coord_name_gp_basis_base not in model.coords:
@@ -479,6 +548,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_medium_term, m=medium_term_hsgp_m, c=medium_term_hsgp_c
             )
             phi_medium_term, sqrt_psd_medium_term = self.gp_medium_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_medium_term = hsgp_sqrt_psd(
+                self.gp_medium_term_time, medium_term_gp_kernel,
+                medium_term_gp_amplitude_sd, medium_term_gp_lengthscale, sqrt_psd_medium_term,
+            )
 
             coord_name_gp_basis_medium = "gp_basis_medium_term"
             if coord_name_gp_basis_medium not in model.coords:
@@ -522,6 +595,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_very_short_term, m=very_short_term_hsgp_m, c=very_short_term_hsgp_c
             )
             phi_very_short_term, sqrt_psd_very_short_term = self.gp_very_short_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_very_short_term = hsgp_sqrt_psd(
+                self.gp_very_short_term_time, very_short_term_gp_kernel,
+                very_short_term_gp_amplitude_sd, very_short_term_gp_lengthscale, sqrt_psd_very_short_term,
+            )
 
             coord_name_gp_basis_very_short = "gp_basis_very_short_term"
             if coord_name_gp_basis_very_short not in model.coords:
@@ -543,9 +620,11 @@ class DynamicGPElectionModel(BaseElectionModel):
                                                   dims=("calendar_time", "parties_complete"))
 
             # --- Calculate Softmax Probabilities (National) ---
+            exists_log = self._existence_log_mask(polls) if self.mask_absent_parties else None
+            national_logits = national_trend_pt + exists_log if exists_log is not None else national_trend_pt
             latent_popularity_national = pm.Deterministic( # Reverted name
                 "latent_popularity_national",
-                pm.math.softmax(national_trend_pt, axis=1), # Apply softmax along party axis (axis=1)
+                pm.math.softmax(national_logits, axis=1), # Apply softmax along party axis (axis=1)
                 dims=("calendar_time", "parties_complete")
             )
             # --- End Softmax Calculation ---
@@ -623,6 +702,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                                              + poll_bias[None, :] # Add poll_bias here
                                              )
 
+            if self.mask_unreported_parties:
+                reported = data_containers["observed_polls"].get_value(borrow=True) > 0
+                latent_polls = latent_polls + np.where(reported, 0.0, -30.0)
+
             # Apply softmax
             poll_probs = pm.Deterministic("poll_probs", pm.math.softmax(latent_polls, axis=1))
 
@@ -649,6 +732,13 @@ class DynamicGPElectionModel(BaseElectionModel):
 
                 # _latent_terms_obs_parties = national_trend_at_result + _static_offset_indexed + _dynamic_adjustment_results.T # Shape (obs, parties)
                 _latent_terms_obs_parties = national_trend_at_result + _static_offset_indexed # Keep only static offset
+                if exists_log is not None:
+                    stood = data_containers["observed_results_district"].get_value(borrow=True) > 0
+                    _latent_terms_obs_parties = (
+                        _latent_terms_obs_parties
+                        + exists_log[self.calendar_time_result_district_id]
+                        + np.where(stood, 0.0, -30.0)
+                    )
 
                 latent_district_result_mean = pm.Deterministic("latent_district_result_mean",
                                                                 _latent_terms_obs_parties,
@@ -696,6 +786,8 @@ class DynamicGPElectionModel(BaseElectionModel):
 
                  # Latent mean = trend + offset + sensitivity * swing
                  latent_district_calendar_mean = trend_b_cal + offset_b_cal # Keep only static offset
+                 if exists_log is not None:
+                     latent_district_calendar_mean = latent_district_calendar_mean + exists_log[:, None, :]
                  # Result shape should be (calendar_time, districts, parties)
 
                  # 5. Apply softmax and save
@@ -750,7 +842,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                  concentration_national_results = pm.Gamma("concentration_national_results", alpha=100, beta=0.1)
 
                  # Get the national latent probability at the times of the national results
-                 p_results_national = latent_popularity_national[data_containers["calendar_time_result_national_idx"]]
+                 # Index with the constant array, not the data container: with a single national
+                 # result (a 2015 backtest knows only 2011) PyTensor cannot tell the length-1 index
+                 # will not broadcast, and the gradient fails at run time.
+                 p_results_national = latent_popularity_national[np.asarray(self.calendar_time_result_national_id, dtype=int)]
 
                  pm.DirichletMultinomial(
                      "result_national_likelihood",
