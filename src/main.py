@@ -156,7 +156,8 @@ def fit_model(args):
              model_kwargs["use_poll_bias"] = not getattr(args, "no_poll_bias", False)
              model_kwargs["poll_bias_per_cycle"] = bool(getattr(args, "poll_bias_per_cycle", False))
              model_kwargs["poll_bias_mean_sd"] = float(getattr(args, "poll_bias_mean_sd", 0.05))
-             for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd"):
+             model_kwargs["center_house_effects"] = bool(getattr(args, "center_house_effects", False))
+             for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd", "center_house_effects"):
                  config_to_save[key] = model_kwargs[key]
              config_to_save["baseline_gp_lengthscale"] = args.baseline_gp_lengthscale
              config_to_save["baseline_gp_kernel"] = args.baseline_gp_kernel
@@ -492,7 +493,7 @@ def load_model(args, directory, election_date=None, baseline_timescales=None, el
 
             # Model-structure options are read from the run's own config, so predict rebuilds the
             # model that was trained (a run saved before they existed gets the defaults)
-            for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd"):
+            for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd", "center_house_effects"):
                 if key in loaded_config:
                     model_kwargs[key] = loaded_config[key]
 
@@ -1643,6 +1644,12 @@ def main(args=None):
         type=float,
         default=0.05,
         help="Prior sd (logit scale) of the carried-over bias with --poll-bias-per-cycle; 0 carries nothing over.",
+    )
+    dynamic_gp_group.add_argument(
+        "--center-house-effects",
+        action="store_true",
+        help="House effects also sum to zero over pollsters (the average firm is unbiased), so an "
+        "industry-wide miss can only enter through the poll bias term.",
     )
 
     # --- Prediction Specific Arguments ---

@@ -66,6 +66,7 @@ class DynamicGPElectionModel(BaseElectionModel):
         use_poll_bias: bool = True,
         poll_bias_per_cycle: bool = False,
         poll_bias_mean_sd: float = 0.05,
+        center_house_effects: bool = False,
         **kwargs
     ):
         """
@@ -124,6 +125,12 @@ class DynamicGPElectionModel(BaseElectionModel):
         # uncertainty then comes from predict --polling-error-sd.
         self.use_poll_bias = use_poll_bias
         self.poll_bias_mean_sd = poll_bias_mean_sd
+        # House effects sum to zero over parties; with center_house_effects they also sum to zero
+        # over pollsters, so the average firm is taken as unbiased and any industry-wide miss
+        # lives only in poll_bias. Off (the original form), each firm's effect is anchored to past
+        # results and their mean overlaps poll_bias, so a fit without poll_bias still carries
+        # an industry correction through the firms.
+        self.center_house_effects = center_house_effects
         # Election-level polling error added to forecast draws (sd of each party's shift on the
         # log scale; 0 = off). The posterior alone covered the result for about half the parties
         # in the backtest; see src/processing/polling_error.py. Set at prediction time.
@@ -704,7 +711,10 @@ class DynamicGPElectionModel(BaseElectionModel):
             # --------------------------------------------------------
             house_effects_sd = pm.HalfNormal("house_effects_sd", sigma=self.house_effect_sd_prior_scale, dims="parties_complete")
             # Non-centered parameterization - Remove sum_axis, use default ZeroSumNormal behavior for now
-            house_effects_raw = pm.ZeroSumNormal("house_effects_raw", sigma=1.0, dims=("pollsters", "parties_complete")) # Removed sum_axis=0
+            house_effects_raw = pm.ZeroSumNormal(
+                "house_effects_raw", sigma=1.0, dims=("pollsters", "parties_complete"),
+                n_zerosum_axes=2 if self.center_house_effects else 1,
+            )
             house_effects = pm.Deterministic("house_effects", house_effects_raw * house_effects_sd[None, :], dims=("pollsters", "parties_complete"))
 
             # --- Average Poll Bias (Zero-Sum across parties) ---

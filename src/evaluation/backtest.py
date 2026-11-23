@@ -394,6 +394,18 @@ FITS = {
         {"mask_unreported_parties": True, "mask_absent_parties": True, "use_poll_bias": False},
         {"gp_nobias": "model", "gp_nobias_blend": "blend_noise"},
     ),
+    # no industry term and house effects centred over pollsters too: no correction at all
+    "gp_nobias_centred": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "use_poll_bias": False, "center_house_effects": True},
+        {"gp_nobias_centred": "model", "gp_nobias_centred_blend": "blend_noise"},
+    ),
+    # static industry bias with centred house effects: the bias lives only in poll_bias
+    "gp_static_centred": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "center_house_effects": True},
+        {"gp_static_centred": "model", "gp_static_centred_blend": "blend_noise"},
+    ),
     # per-cycle deviation only, nothing carried over: no party-specific correction
     "gp_bias_cycle0": (
         "gp_current",
