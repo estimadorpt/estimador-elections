@@ -48,12 +48,14 @@ on 23 November 2026, with the amendments above: the model and the backtest now d
 with `add_sqrt_noise`, c from `calibrate_sqrt_noise` on earlier elections only (0.03 for the next
 election; 0.025–0.035 for the 2015–2025 targets).
 
-Stage A, district-share CRPS in pp (settings chosen leave-one-election-out):
+Stage A, district-share CRPS in pp (settings chosen leave-one-election-out). Every score uses the
+target election's own seat map (`backtest.seats_for`); the first run used the 2019–2022 map for all,
+and the verdict and every count below are the same either way:
 
 | | 2011 | 2015 | 2019 | 2022 | 2024 | 2025 | 90% coverage |
 |---|---|---|---|---|---|---|---|
-| Current (k 0.4–0.6) | 0.720 | 1.251 | 0.558 | 0.442 | 0.510 | 0.371 | 0.62 |
-| √p (c 0.03–0.035) | **0.571** | **1.190** | **0.524** | **0.436** | 0.521 | 0.387 | 0.85 |
+| Current (k 0.4–0.6) | 0.718 | 1.247 | 0.558 | 0.442 | 0.510 | 0.371 | 0.62 |
+| √p (c 0.03–0.035) | **0.569** | **1.186** | **0.524** | **0.436** | 0.520 | 0.387 | 0.85 |
 
 Better in 4 of 6, mean gain 4.5%, sign-flip p 0.005. Two things weaken it:
 
@@ -73,9 +75,9 @@ Stage B, averages over 2015–2025:
 
 | Horizon | District-seat RPS | Seat-total RPS | Seat-total 90% coverage |
 |---|---|---|---|
-| 7 days | 19.94 → 19.92 | 2.161 → 2.148 | 0.84 → 0.94 |
-| 28 days | 25.35 → 25.27 | 3.051 → 3.033 | 0.92 → 0.94 |
-| 56 days | 27.74 → 27.69 | 3.376 → 3.363 | 0.89 → 0.92 |
+| 7 days | 20.19 → 20.14 | 2.171 → 2.155 | 0.84 → 0.94 |
+| 28 days | 25.44 → 25.36 | 3.037 → 3.018 | 0.89 → 0.94 |
+| 56 days | 27.84 → 27.78 | 3.364 → 3.350 | 0.89 → 0.92 |
 
 Better at two or more horizons in 3 of 5 elections. Once the national forecast is uncertain, the
 form of the district noise changes seat scores by under 0.5%.

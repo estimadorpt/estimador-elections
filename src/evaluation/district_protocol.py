@@ -42,7 +42,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from src.evaluation.backtest import PARTIES, load_truth
+from src.evaluation.backtest import PARTIES, load_truth, seats_for
 from src.processing.district_swing import (
     blend_swing,
     calibrate_noise,
@@ -200,7 +200,8 @@ def share_scores(dist: np.ndarray, target: str) -> Dict[str, object]:
     y = district[E].values
     ran = national[E].values > 0
     c = crps_cells(dist * 100, y * 100)[:, ran]  # (D, P_ran), pp
-    w = seats.values / seats.values.sum()
+    k = seats_for(E, seats.index)  # the target election's own seat map
+    w = k / k.sum()
     lo, hi = np.quantile(dist, [0.05, 0.95], axis=0)
     inn = ((lo <= y) & (y <= hi))[:, ran]
     reg = _region_index(seats.index)
@@ -219,8 +220,9 @@ def seat_scores(dist: np.ndarray, target: str) -> Dict[str, float]:
     E = pd.Timestamp(target)
     y = district[E].values
     ran = national[E].values > 0
-    ts = seats_from_district_shares(y[None], seats.values)[0]  # (D, P)
-    sd = seats_from_district_shares(dist, seats.values)  # (S, D, P)
+    k = seats_for(E, seats.index)  # the target election's own seat map
+    ts = seats_from_district_shares(y[None], k)[0]  # (D, P)
+    sd = seats_from_district_shares(dist, k)  # (S, D, P)
     tot, ttot = sd.sum(1), ts.sum(0)
     lo, hi = np.quantile(tot, [0.05, 0.95], axis=0)
     return dict(
