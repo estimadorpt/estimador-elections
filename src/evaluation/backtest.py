@@ -326,6 +326,14 @@ FITS = {
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
     "rw_nobias": ("rw", {"bias_sd_prior": 1e-3}, {"rw_nobias": "blend_noise"}),
+    # one industry bias for every cycle, like the GP model's poll_bias (per-cycle spread ~0)
+    "rw_static": (
+        "rw",
+        {"persistent_bias": True, "persistent_bias_sd": 0.3, "bias_sd_prior": 1e-3},
+        {"rw_static": "blend_noise"},
+    ),
+    # a learned mean bias that carries forward, plus a per-cycle deviation around it
+    "rw_hybrid": ("rw", {"persistent_bias": True, "persistent_bias_sd": 0.3}, {"rw_hybrid": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
 }
