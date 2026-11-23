@@ -48,6 +48,7 @@ from src.processing.district_swing import (
 )
 
 PARTIES = ["PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD"]
+RIGHT_BLOC = ["AD", "IL", "CH"]
 ALL_ELECTIONS = ["2009-09-27", "2011-06-05", "2015-10-04", "2019-10-06", "2022-01-30", "2024-03-10", "2025-05-18"]
 BACKTEST_ELECTIONS = ["2015-10-04", "2019-10-06", "2022-01-30", "2024-03-10", "2025-05-18"]
 
@@ -339,6 +340,17 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
         seat_rps=float(party.loc[r, "seat_rps"].mean()),
         winner_logscore=float(-np.log(max((winners == winner_true).mean(), 1 / (2 * S)))),
     )
+    # the right bloc (AD, IL, Chega) as one quantity: per-party scores barely see whether the
+    # parties' errors move together, a bloc total does
+    rb = [PARTIES.index(p) for p in RIGHT_BLOC]
+    right_seats = tot[:, rb].sum(1).astype(float)
+    true_right_seats = float(true_tot[rb].sum())
+    lo_r, hi_r = np.quantile(right_seats, [0.05, 0.95])
+    summary.update(
+        right_share_crps=crps_sample(pred_nat[:, rb].sum(1) * 100, float(y[rb].sum()) * 100),
+        right_seats_crps=crps_sample(right_seats, true_right_seats),
+        right_seats_in90=float(lo_r <= true_right_seats <= hi_r) if S > 1 else np.nan,
+    )
     return summary, party
 
 
@@ -526,12 +538,24 @@ def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFr
     return out
 
 
+# Shapes of the election-level error tried by --calibrate (see add_polling_error): independent
+# normal shifts; half of each party's variance a shared left-right swing; heavy tails (t, 5 df,
+# one scale per draw so big misses hit many parties at once); both.
+ERROR_FORMS = {
+    "iid": {},
+    "bloc": {"bloc_rho": 0.5},
+    "t5": {"df": 5.0},
+    "bloc_t5": {"bloc_rho": 0.5, "df": 5.0},
+}
+
+
 def calibrate_polling_error(
     out_dir: str,
     models: Sequence[str] = ("gp_masked", "rw"),
     horizon: int = 56,
     taus: Sequence[float] = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6),
     seed: int = 1,
+    forms: Sequence[str] = ("iid",),
 ) -> pd.DataFrame:
     """Score saved national draws with an added election-level polling error of each size.
 
@@ -540,10 +564,10 @@ def calibrate_polling_error(
     a leave-one-election-out choice (tau picked by CRPS on the other elections), with a pass or
     fail against `CALIBRATION_GATE`.
     """
-    from src.processing.polling_error import add_polling_error
+    from src.processing.polling_error import add_polling_error, bloc_signs
 
     district, national, seats_map = load_truth()
-    rng = np.random.default_rng(seed)
+    signs = bloc_signs(PARTIES)
     rows = []
     for model in models:
         for f in sorted(os.listdir(out_dir)):
@@ -553,22 +577,25 @@ def calibrate_polling_error(
             nat0 = np.load(os.path.join(out_dir, f))
             if nat0.shape[0] == 1:  # a point forecast (poll average, last result): give it draws
                 nat0 = np.repeat(nat0, 2000, axis=0)
-            for tau in taus:
-                nat = add_polling_error(nat0, tau, rng)
-                summ, _ = score(nat, districts_from_national(nat, E, noise=True), E, seats_map)
-                rows.append(dict(model=model, election=E, horizon=horizon, tau=tau, **summ))
+            for form in forms:
+                rng = np.random.default_rng(seed)  # the same draws for every form and model
+                for tau in taus:
+                    nat = add_polling_error(nat0, tau, rng, signs=signs, **ERROR_FORMS[form])
+                    summ, _ = score(nat, districts_from_national(nat, E, noise=True), E, seats_map)
+                    rows.append(dict(model=model, form=form, election=E, horizon=horizon, tau=tau, **summ))
     df = pd.DataFrame(rows)
     if df.empty:
         return df
     df.to_csv(os.path.join(out_dir, f"polling_error_h{horizon:03d}.csv"), index=False)
     cols = ["nat_crps", "nat_cov50", "nat_cov90", "nat_cov90_polled", "seat_cov90", "seat_logscore", "seat_rps"]
-    print(df.groupby(["model", "tau"])[cols].mean().round(3).to_string())
-    for model, d in df.groupby("model"):
+    print(df.groupby(["model", "form", "tau"])[cols].mean().round(3).to_string())
+    for (model, form), d in df.groupby(["model", "form"]):
         for rule in ("crps", "coverage"):
             o = loo_tau(d, rule)
             verdict = calibration_verdict(o, d[d.tau == 0])
+            label = model if form == "iid" else f"{model} [{form}]"
             print(
-                f"{model} h{horizon} tau by {rule}, left out one election at a time: {list(o.tau_chosen)}; "
+                f"{label} h{horizon} tau by {rule}, left out one election at a time: {list(o.tau_chosen)}; "
                 + ", ".join(f"{k} {v}" for k, v in verdict.items())
             )
     return df
@@ -615,8 +642,9 @@ def calibration_verdict(chosen: pd.DataFrame, untouched: pd.DataFrame) -> Dict[s
     # for ranking models at their calibrated tau (crps_ratio only compares a model with itself, and
     # a point forecast's ratio is against zero spread)
     out["nat_crps"] = round(float(chosen["nat_crps"].mean()), 3)
-    if "seat_rps" in chosen:
-        out["seat_rps"] = round(float(chosen["seat_rps"].mean()), 3)
+    for k in ("seat_rps", "right_share_crps", "right_seats_crps", "right_seats_in90"):
+        if k in chosen:
+            out[k] = round(float(chosen[k].mean()), 3)
     return out
 
 
@@ -770,6 +798,7 @@ def main(argv=None):
     ap.add_argument("--out", default="outputs/backtest/WIP_backtest")
     ap.add_argument("--summarise", metavar="DIR")
     ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
+    ap.add_argument("--error-forms", nargs="+", default=["iid"], choices=sorted(ERROR_FORMS), help="error shapes for --calibrate")
     ap.add_argument("--district-oracle", action="store_true")
     ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
     ap.add_argument("--compare", nargs=3, metavar=("DIR", "A", "B"), help="per-election differences A - B")
@@ -790,7 +819,7 @@ def main(argv=None):
     if args.calibrate:
         pd.set_option("display.width", 250)
         for h in args.horizons:
-            calibrate_polling_error(args.calibrate, models=args.models, horizon=h)
+            calibrate_polling_error(args.calibrate, models=args.models, horizon=h, forms=args.error_forms)
         return
     if args.district_oracle:
         df = district_oracle()

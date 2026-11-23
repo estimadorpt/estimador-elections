@@ -23,24 +23,47 @@ import numpy as np
 
 ABSENT_SHARE = 1e-4  # a party below this mean share is treated as not running
 
+# Left (-1) and right (+1) blocs for a correlated error: a shared left-right swing in the miss.
+LEFT_RIGHT = {"PS": -1, "BE": -1, "CDU": -1, "L": -1, "PAN": -1, "AD": 1, "IL": 1, "CH": 1}
+
+
+def bloc_signs(parties) -> np.ndarray:
+    return np.array([LEFT_RIGHT.get(str(p), 0) for p in parties], dtype=float)
+
 
 def add_polling_error(
     shares: np.ndarray,
     tau: float,
     rng: Optional[np.random.Generator] = None,
     absent_share: float = ABSENT_SHARE,
+    bloc_rho: float = 0.0,
+    signs: Optional[np.ndarray] = None,
+    df: Optional[float] = None,
 ) -> np.ndarray:
     """Return (S, P) draws with an election-level polling error added.
 
     shares: (S, P) national vote shares, rows summing to 1.
     tau: sd of each party's shift on the log scale (0 returns the input unchanged).
+    bloc_rho: share of each party's shift variance that is a left-right swing common to its
+        bloc (`signs`, +1 right / -1 left / 0 neither, e.g. `bloc_signs(parties)`); 0 = independent.
+    df: Student-t degrees of freedom for the whole draw's error (one scale per draw, so big
+        misses hit many parties at once), standardised so tau stays the sd; None = normal.
     """
     shares = np.asarray(shares, dtype=float)
     if tau <= 0:
         return shares.copy()
     rng = np.random.default_rng() if rng is None else rng
     alive = shares.mean(0) > absent_share
-    eps = rng.normal(0.0, tau, shares.shape) * alive[None, :]
+    z = rng.normal(0.0, 1.0, shares.shape)
+    if bloc_rho > 0:
+        if signs is None:
+            raise ValueError("bloc_rho needs signs (bloc_signs(parties))")
+        swing = rng.normal(0.0, 1.0, (shares.shape[0], 1)) * np.asarray(signs, float)[None, :]
+        z = np.sqrt(1 - bloc_rho) * z + np.sqrt(bloc_rho) * swing
+    if df is not None:
+        scale = np.sqrt(df / rng.chisquare(df, (shares.shape[0], 1))) * np.sqrt((df - 2) / df)
+        z = z * scale
+    eps = tau * z * alive[None, :]
     if alive.any():
         eps[:, alive] -= eps[:, alive].mean(1, keepdims=True)
     out = shares.copy()

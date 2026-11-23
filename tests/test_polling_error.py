@@ -27,3 +27,21 @@ def test_spread_grows_with_tau_and_with_share():
     alive = [0, 1, 2, 4]
     np.testing.assert_allclose(sd2[alive] / sd1[alive], 2.0, rtol=0.1)
     assert sd2[4] > sd2[0] > sd2[1] > sd2[2] > 0
+
+
+def test_bloc_swing_and_heavy_tails_keep_tau_as_the_sd_and_correlate_blocs():
+    import numpy as np
+
+    from src.processing.polling_error import add_polling_error, bloc_signs
+
+    parties = ["PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD"]
+    base = np.tile(np.array([0.3, 0.25, 0.06, 0.03, 0.03, 0.02, 0.04, 0.27]), (40000, 1))
+    signs = bloc_signs(parties)
+    d_iid = np.log(add_polling_error(base, 0.2, np.random.default_rng(0))) - np.log(base)
+    d_bloc = np.log(add_polling_error(base, 0.2, np.random.default_rng(0), bloc_rho=0.5, signs=signs)) - np.log(base)
+    d_t = np.log(add_polling_error(base, 0.2, np.random.default_rng(0), df=5.0)) - np.log(base)
+    ps, ad = 0, 7
+    assert np.corrcoef(d_bloc[:, ps], d_bloc[:, ad])[0, 1] < np.corrcoef(d_iid[:, ps], d_iid[:, ad])[0, 1] - 0.3
+    assert abs(d_t[:, ad].std() / d_iid[:, ad].std() - 1) < 0.05  # same sd ...
+    kurt = lambda x: ((x - x.mean()) ** 4).mean() / x.var() ** 2
+    assert kurt(d_t[:, ad]) > kurt(d_iid[:, ad]) + 1  # ... heavier tails
