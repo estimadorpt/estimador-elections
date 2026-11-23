@@ -14,8 +14,14 @@ same polls.
     python -m src.forecast_rw --target 2029-10-07 --out outputs/WIP_rw_2029
 
 Writes to --out: national_summary.csv (median and 50%/90% intervals, in %), national_draws.npy
-(draws x parties, polling error included), the seat files of `simulate_seat_allocation`, and
-run.json (dates, horizon, polling error, sampler diagnostics).
+(draws x parties, polling error included), the seat files of `simulate_seat_allocation`,
+run.json (dates, horizon, polling error, sampler diagnostics and the acceptance gate),
+diagnostics.csv (r-hat, bulk and tail ESS of every sampled and derived value, worst first) and
+trace.zarr (the posterior; see `--full-trace`).
+
+The gate (CLAUDE.md: 0 divergences, r-hat < 1.01, ESS > 400) is checked on every value the
+forecast depends on, the latent weekly path included: cells of a party that does not exist yet
+(and the unused first step) are left out, since no share depends on them.
 """
 
 from __future__ import annotations
@@ -60,6 +66,85 @@ def tau_for_horizon(days: float, table: Optional[dict] = None) -> float:
     return float(np.interp(days, hs, [table[h] for h in hs]))
 
 
+GATE = {"max_rhat": 1.01, "min_ess": 400}
+
+
+def full_diagnostics(idata, exists: Optional[np.ndarray] = None) -> tuple[dict, pd.DataFrame]:
+    """Convergence of every posterior value: (summary dict, per-cell table sorted worst first).
+
+    exists: (time, parties) mask of the random walk; cells of `eta` and `z_rw` where a party does
+    not exist yet, and the first step (unused), are dropped: nothing depends on them. Constant
+    cells (r-hat undefined) are counted, not scored.
+    """
+    import arviz as az
+
+    post = idata.posterior
+    rhat = az.rhat(post, method="rank")
+    bulk = az.ess(post, method="bulk")
+    tail = az.ess(post, method="tail")
+    rows = []
+    for name in post.data_vars:
+        cols = {"r_hat": rhat[name], "ess_bulk": bulk[name], "ess_tail": tail[name]}
+        if rhat[name].ndim == 0:
+            tab = pd.DataFrame({k: [float(v)] for k, v in cols.items()}, index=[name])
+        else:
+            tab = pd.concat([v.to_series().rename(k) for k, v in cols.items()], axis=1)
+            if name in ("eta", "z_rw") and exists is not None and rhat[name].dims == ("time", "parties"):
+                keep = np.asarray(exists, bool).copy()
+                if name == "z_rw":
+                    keep[0] = False  # the first step is masked out of the walk
+                tab = tab[keep.reshape(-1)]
+            tab.index = [f"{name}[{', '.join(map(str, i if isinstance(i, tuple) else (i,)))}]" for i in tab.index]
+        tab.insert(0, "variable", name)
+        rows.append(tab)
+    table = pd.concat(rows)
+    scored = table.dropna(subset=["r_hat"])
+    st = idata.sample_stats
+    out = {
+        "divergences": int(st["diverging"].sum()),
+        "mean_step_size": float(st["step_size"].mean()) if "step_size" in st else None,
+        "mean_tree_depth": float(st["tree_depth"].mean()) if "tree_depth" in st else None,
+        "n_values": int(len(table)),
+        "n_constant": int(len(table) - len(scored)),
+        "max_rhat": float(scored["r_hat"].max()),
+        "max_rhat_at": str(scored["r_hat"].idxmax()),
+        "min_ess_bulk": float(scored["ess_bulk"].min()),
+        "min_ess_bulk_at": str(scored["ess_bulk"].idxmin()),
+        "min_ess_tail": float(scored["ess_tail"].min()),
+        "min_ess_tail_at": str(scored["ess_tail"].idxmin()),
+        "n_rhat_over_1.01": int((scored["r_hat"] >= GATE["max_rhat"]).sum()),
+        "n_ess_under_400": int(((scored["ess_bulk"] <= GATE["min_ess"]) | (scored["ess_tail"] <= GATE["min_ess"])).sum()),
+        "by_variable": {
+            v: {"max_rhat": round(float(g["r_hat"].max()), 4), "min_ess_bulk": round(float(g["ess_bulk"].min())),
+                "min_ess_tail": round(float(g["ess_tail"].min()))}
+            for v, g in scored.groupby("variable")
+        },
+    }
+    out["passes_gate"] = bool(
+        out["divergences"] == 0
+        and out["max_rhat"] < GATE["max_rhat"]
+        and out["min_ess_bulk"] > GATE["min_ess"]
+        and out["min_ess_tail"] > GATE["min_ess"]
+    )
+    order = scored.assign(_k=-scored["r_hat"]).sort_values(["_k", "ess_bulk"]).index
+    table = pd.concat([table.loc[order], table.drop(index=order)]).round(4)
+    return out, table
+
+
+def _light_posterior(idata, data, keep_weeks: int = 52, every: int = 4):
+    """The posterior without the weekly innovations, and the latent path only at the last
+    `keep_weeks` weeks, every `every`-th week before them and the election dates (float32)."""
+    post = idata.posterior
+    T = post.sizes["time"]
+    weeks = set(range(max(T - keep_weeks, 0), T)) | set(range(T - 1, -1, -every)) | set(int(t) for t in data.result_t)
+    light = post.drop_vars([v for v in ("z_rw", "eta") if v in post])
+    if "time" in light.coords and not any("time" in light[v].dims for v in light.data_vars):
+        light = light.drop_vars("time")  # else the kept weeks would be re-aligned to every week
+    if "eta" in post:
+        light = light.assign(eta=post["eta"].isel(time=sorted(weeks)).astype("float32"))
+    return light
+
+
 def run(
     out: str,
     target: str = "last_poll",
@@ -71,10 +156,11 @@ def run(
     chains: int = 4,
     seed: int = 20261123,
     seat_samples: int = 2000,
+    full_trace: bool = False,
 ) -> dict:
     import xarray as xr
 
-    from src.evaluation.backtest import PARTIES, _diagnostics, _sample, make_dataset
+    from src.evaluation.backtest import PARTIES, _sample, make_dataset
     from src.models.poll_rw_model import RWConfig, build_rw_model, national_share_draws, prepare_rw_data
     from src.processing.district_swing import district_posterior_from_national
     from src.processing.polling_error import add_polling_error
@@ -95,7 +181,16 @@ def run(
     cfg = RWConfig(**BIAS_FORMS[bias])
     data = prepare_rw_data(polls, ds.results_national, target_ts, ds.historical_election_dates, PARTIES, cfg)
     idata = _sample(build_rw_model(data, cfg), draws, tune, chains, seed)
-    diag = _diagnostics(idata, var_names=["sigma_rw", "sigma_house", "concentration_polls", "house"])
+    diag, diag_table = full_diagnostics(idata, data.exists)
+    diag_table.to_csv(os.path.join(out, "diagnostics.csv"), index_label="value")
+    if full_trace:
+        idata.to_zarr(os.path.join(out, "trace.zarr"))
+    else:
+        import arviz as az
+
+        az.InferenceData(posterior=_light_posterior(idata, data), sample_stats=idata.sample_stats).to_zarr(
+            os.path.join(out, "trace.zarr")
+        )
 
     rng = np.random.default_rng(seed)
     nat = add_polling_error(national_share_draws(idata, data), tau, rng)  # (chains*draws, P)
@@ -141,13 +236,16 @@ def run(
         "seed": seed,
         "cfg": asdict(cfg),
         "diagnostics": diag,
+        "gate": GATE,
+        "trace": "full" if full_trace else "light: no weekly innovations; latent path for the last 52 weeks, every 4th before and election dates",
     }
     with open(os.path.join(out, "run.json"), "w") as f:
         json.dump(info, f, indent=2, default=str)
     print(summary.sort_values("median", ascending=False).to_string())
     if seat_summary is not None:
         print(seat_summary.to_string())
-    print(json.dumps({k: info[k] for k in ("last_poll", "target", "horizon_days", "polling_error_sd", "diagnostics")}, default=str))
+    brief = {k: v for k, v in diag.items() if k != "by_variable"}
+    print(json.dumps({**{k: info[k] for k in ("last_poll", "target", "horizon_days", "polling_error_sd")}, "diagnostics": brief}, default=str))
     return info
 
 
@@ -162,8 +260,9 @@ def main(argv=None) -> None:
     ap.add_argument("--tune", type=int, default=1000)
     ap.add_argument("--chains", type=int, default=4)
     ap.add_argument("--seed", type=int, default=20261123)
+    ap.add_argument("--full-trace", action="store_true", help="save every variable in trace.zarr (about 1 GB at 4 x 2000)")
     a = ap.parse_args(argv)
-    run(a.out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed)
+    run(a.out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed, full_trace=a.full_trace)
 
 
 if __name__ == "__main__":
