@@ -382,6 +382,63 @@ def load_marktest_polls():
     return df
 
 
+def drop_election_day_polls(polls: pd.DataFrame, election_dates: List[str]) -> pd.DataFrame:
+    """Drop polls dated on an election day.
+
+    Every such row in the Marktest list is an exit poll (n of 18,000 to 39,000 for
+    2022, 2024 and 2025) or, once in 2015, a survey run up to polling day. They
+    measure the result, not the campaign, and because poll-to-cycle assignment
+    looks for the next election strictly after a poll's date, they used to land
+    at the start of the following cycle with a huge weight.
+    """
+    election_days = pd.to_datetime(list(election_dates))
+    on_election_day = pd.to_datetime(polls["date"]).isin(election_days)
+    if on_election_day.any():
+        dropped = polls.loc[on_election_day, ["date", "pollster", "sample_size"]]
+        print(f"Dropping {int(on_election_day.sum())} polls dated on an election day (exit polls):")
+        print(dropped.to_string(index=False))
+    return polls.loc[~on_election_day].reset_index(drop=True)
+
+
+def combine_poll_sources(
+    marktest: pd.DataFrame,
+    wikipedia: pd.DataFrame,
+    match_window_days: int = 3,
+) -> pd.DataFrame:
+    """Add Wikipedia polls that the Marktest list does not already hold.
+
+    A Wikipedia poll is the same poll as a Marktest one when the pollster matches
+    and the dates are at most ``match_window_days`` apart (Wikipedia and Marktest
+    sometimes differ by a day on the fieldwork end). Marktest rows win, so the
+    history the model was fitted on does not change. Returns the Marktest columns.
+    """
+    if wikipedia is None or wikipedia.empty:
+        return marktest
+    columns = list(marktest.columns)
+    mk = marktest[["date", "pollster"]].copy()
+    mk["pollster_key"] = mk["pollster"].str.lstrip("* ").str.strip()
+    new_rows = []
+    duplicates = []
+    for _, row in wikipedia.iterrows():
+        same_pollster = mk[mk["pollster_key"] == row["pollster"]]
+        gap = (same_pollster["date"] - row["date"]).abs().dt.days
+        if (gap <= match_window_days).any():
+            duplicates.append(row)
+        else:
+            new_rows.append(row)
+    added = pd.DataFrame(new_rows, columns=wikipedia.columns)
+    print(
+        f"Wikipedia polls: {len(wikipedia)} in file, {len(duplicates)} already in the Marktest list, "
+        f"{len(added)} added ({added['date'].min().date() if len(added) else '-'} to "
+        f"{added['date'].max().date() if len(added) else '-'})."
+    )
+    for column in columns:
+        if column not in added.columns:
+            added[column] = 0.0
+    combined = pd.concat([marktest, added[columns]], ignore_index=True)
+    return combined.sort_values("date").reset_index(drop=True)
+
+
 def load_popstar_polls():
     """Load polls from popstar_sondagens_data.csv"""
     df = pd.read_csv(os.path.join(DATA_DIR, "popstar_sondagens_data.csv"), encoding='latin1', na_values=[' '])

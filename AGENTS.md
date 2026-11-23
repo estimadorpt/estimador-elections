@@ -95,13 +95,21 @@ pytest -m "not optional"   # Run only non-optional tests
 pytest tests/test_dataset.py  # Run specific test file
 ```
 
+### Next legislative election (nowcast)
+
+2025-05-18 is the last historical election. No election is scheduled, so `pixi run train` uses the
+placeholder date 2029-10-07 (the regular election falls in autumn 2029; any date more than 90 days
+after the last poll keeps the campaign GP out of the fit). Read the "if the election were today"
+estimate with `pixi run nowcast` (`--prediction-date-mode last_poll`). Once an election is called,
+train with its real date.
+
 ### Running the Election Model
 
 All model commands should be run from the project root directory using the module syntax:
 
 ```bash
 # Train a new model
-python -m src.main --mode train --election-date 2026-01-01 --output-dir outputs --draws 1000 --tune 1000
+python -m src.main --mode train --election-date 2029-10-07 --output-dir outputs --draws 1000 --tune 1000
 
 # Generate visualizations from a saved model
 python -m src.main --mode viz --load-dir outputs/latest
@@ -113,7 +121,7 @@ python -m src.main --mode diagnose --load-dir outputs/latest
 python -m src.main --mode predict --load-dir outputs/latest
 
 # Visualize raw data
-python -m src.main --mode visualize-data --election-date 2026-01-01 --output-dir outputs/data_viz
+python -m src.main --mode visualize-data --election-date 2029-10-07 --output-dir outputs/data_viz
 
 # Run cross-validation
 python -m src.main --mode cross-validate --output-dir outputs/cv_results --draws 500 --tune 500
@@ -151,7 +159,7 @@ Key model parameters:
 ### Data Sources
 
 The model integrates multiple data types:
-- Poll data: marktest_polls.csv, polls_renascenca.tsv, popstar_sondagens_data.csv
+- Poll data: marktest_polls.csv (the history; last collected 18 Sep 2025, needs a manual Marktest login) plus wikipedia_legislative_polls.csv (every poll since the 18 May 2025 election, parsed from a verbatim snapshot in `data/wikipedia/` by `python -m src.data.wikipedia_polls <snapshot> data/wikipedia_legislative_polls.csv`). `ElectionDataset._load_polls` adds the Wikipedia polls the Marktest list lacks (same pollster, fieldwork end within 3 days = same poll), drops polls dated on an election day (exit polls) and counts a rolling tracker release (Pitagórica's weekly n=804) only by its new interviews. polls_renascenca.tsv and popstar_sondagens_data.csv are not loaded.
 - Election results: legislativas_*.parquet files
 - Economic indicators: gdp.csv
 

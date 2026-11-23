@@ -6,6 +6,8 @@ import os
 from src.config import DATA_DIR
 from src.data.loaders import (
     load_marktest_polls,
+    drop_election_day_polls,
+    combine_poll_sources,
     load_popstar_polls,
     load_rr_polls,
     load_election_results,
@@ -16,6 +18,7 @@ from src.data.loaders import (
     train_test_split,
     standardize
 )
+from src.data.wikipedia_polls import load_wikipedia_polls
 from src.data.flexible_loaders import (
     load_election_results_flexible,
     GeographicLevelManager
@@ -33,8 +36,10 @@ class ElectionDataset:
         'PS', 'CH', 'IL', 'BE', 'CDU', 'PAN', 'L', 'AD'
     ]
 
-    # Historical elections with actual results
+    # Historical elections with actual results, newest first (find_closest_election_date
+    # reads index 0 as the last election held).
     historical_election_dates = [
+        '2025-05-18',
         '2024-03-10',
         '2022-01-30',
         '2019-10-06',
@@ -49,7 +54,8 @@ class ElectionDataset:
         '2015-10-04': ['PS'],          # PS formed government after 2015 election
         '2019-10-06': ['PS'],          # PS won in 2019
         '2022-01-30': ['PS'],          # PS won in 2022
-        '2024-03-10': ['AD'],          # AD won in 2024 and currently in power
+        '2024-03-10': ['AD'],          # AD won in 2024
+        '2025-05-18': ['AD'],          # AD won again in 2025 and is in power (Nov 2026)
     }
 
     def __init__(
@@ -236,8 +242,17 @@ class ElectionDataset:
                         print(f"  - Sample rows with NaN in {col}:\n{nan_rows}\n")
 
     def _load_polls(self):
-        """Load poll data from various sources"""
+        """Load poll data from various sources.
+
+        The Marktest list is the history. Polls since then come from the saved
+        Wikipedia table (data/wikipedia_legislative_polls.csv), less any poll the
+        Marktest list already holds. Exit polls are dropped.
+        """
         polls_df = load_marktest_polls()
+        wikipedia_path = os.path.join(DATA_DIR, "wikipedia_legislative_polls.csv")
+        if os.path.exists(wikipedia_path):
+            polls_df = combine_poll_sources(polls_df, load_wikipedia_polls(wikipedia_path))
+        polls_df = drop_election_day_polls(polls_df, self.historical_election_dates)
         
         # Uncomment below to load from other sources if needed
         # polls_df = pd.concat([load_popstar_polls(), load_rr_polls()])
