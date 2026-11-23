@@ -576,6 +576,98 @@ def district_oracle() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+TRANSFER_DIR = os.path.join(DATA_DIR, "transfer_matrices")
+
+
+def load_district_counts() -> Dict[pd.Timestamp, pd.DataFrame]:
+    """Party votes, voters and registered voters per seat-map district, per election."""
+    from src.data.flexible_loaders import load_election_results_flexible
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        d = load_election_results_flexible(ALL_ELECTIONS, PARTIES, aggregation_level="district")
+    d["election_date"] = pd.to_datetime(d["election_date"])
+    _, _, seats = load_truth()
+    cols = PARTIES + ["number_voters", "subscribed_voters"]
+    return {t: g.set_index("Circulo")[cols].astype(float).reindex(seats.index) for t, g in d.groupby("election_date")}
+
+
+def _score_district_rule(pred: np.ndarray, true_d: np.ndarray, seats_map: pd.Series) -> Dict:
+    true_seats = seats_from_district_shares(true_d[None], seats_map.values)[0]
+    ps = seats_from_district_shares(pred[None], seats_map.values)[0]
+    ch = PARTIES.index("CH")
+    return dict(
+        district_mae_pp=float(np.abs(pred - true_d).mean() * 100),
+        ch_district_mae_pp=float(np.abs(pred[:, ch] - true_d[:, ch]).mean() * 100),
+        district_seats_misallocated=float(np.abs(ps - true_seats).sum() / 2),
+        national_seat_error=float(np.abs(ps.sum(0) - true_seats.sum(0)).sum() / 2),
+    )
+
+
+def transfer_oracle(
+    abstainer_shares: Sequence[float] = (0.025, 0.05, 0.10),
+    shrink: Sequence[float] = (0.1, 0.25, 0.5, 0.75),
+) -> pd.DataFrame:
+    """Vote-transfer district rules against share swings, given the true national result.
+
+    One block per transfer table in data/transfer_matrices/sources.json: the share-swing rules
+    of `district_oracle` and the transfer rules (proportional and 50/50 blend after pushing the
+    last district results through the table), plus variants where the last election's
+    abstainers supply a fixed share of the current vote, and the whole curve of tables shrunk
+    toward no transfers, (1 - lam) I + lam T. None of these settings is tuned on the elections;
+    all are reported.
+
+    Result (Nov 2026, CESOP final pre-election polls for 2022/2024/2025 and the 2025 exit poll):
+    the full tables were worse than blend swing on district MAE in every election (0.85-1.07 pp
+    against 0.57-0.74), the 35,000-voter exit poll as well, so sample size is not the problem
+    (all four rest on recalled vote). Seats misallocated, full transfer vs blend: 10-11 vs 5 in
+    2022, 2 vs 7 in 2024, 4-5 vs 4 in 2025. The abstainer variants (registered minus voters,
+    which includes stale rolls unevenly across districts) were worse at every share. Lightly
+    shrunk tables (lam 0.1-0.25) beat blend by ~0.03 pp on average, nearly all in 2022, with lam
+    chosen after the fact: not established.
+    """
+    from src.processing.district_swing import load_transfer_matrix, transfer_swing
+
+    district, national, seats_map = load_truth()
+    counts = load_district_counts()
+    with open(os.path.join(TRANSFER_DIR, "sources.json")) as f:
+        tables = json.load(f)["tables"]
+    rows = []
+    for fname, meta in tables.items():
+        E, prev = pd.Timestamp(meta["election"]), pd.Timestamp(meta["previous"])
+        if prev != max(t for t in national if t < E):
+            raise ValueError(f"{fname}: previous election {prev.date()} is not the one before {E.date()}")
+        T, abst = load_transfer_matrix(os.path.join(TRANSFER_DIR, fname), PARTIES, meta.get("merge"))
+        y = national[E].values[None, :]
+        last_n, last_d = national[prev].values, district[prev].values
+        c = counts[prev]
+        votes = c[PARTIES].sum(1)
+        abstainers = c["subscribed_voters"] - c["number_voters"]
+        ratio, ratio_nat = (abstainers / votes).values, float(abstainers.sum() / votes.sum())
+        rules = {
+            "proportional": blend_swing(y, last_n, last_d, 1.0)[0],
+            "uniform": blend_swing(y, last_n, last_d, 0.0)[0],
+            "blend": blend_swing(y, last_n, last_d, 0.5)[0],
+            "transfer_prop": transfer_swing(y, last_n, last_d, T, 1.0)[0],
+            "transfer_blend": transfer_swing(y, last_n, last_d, T, 0.5)[0],
+        }
+        for lam in shrink:
+            T_lam = (1 - lam) * np.eye(len(PARTIES)) + lam * T
+            rules[f"transfer_prop@{lam:g}"] = transfer_swing(y, last_n, last_d, T_lam, 1.0)[0]
+            rules[f"transfer_blend@{lam:g}"] = transfer_swing(y, last_n, last_d, T_lam, 0.5)[0]
+        for share in abstainer_shares:
+            for name, w in (("transfer_prop", 1.0), ("transfer_blend", 0.5)):
+                rules[f"{name}+abst{share:g}"] = transfer_swing(
+                    y, last_n, last_d, T, w, abstainer_row=abst, abstainer_ratio=ratio,
+                    abstainer_ratio_national=ratio_nat, abstainer_share=share,
+                )[0]
+        for name, pred in rules.items():
+            rows.append(
+                dict(election=str(E.date()), table=fname.replace(".csv", ""), kind=meta["kind"].split(" (")[0].split(";")[0],
+                     rule=name, **_score_district_rule(pred, district[E].values, seats_map))
+            )
+    return pd.DataFrame(rows)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--models", nargs="+", default=["rw", "poll_average", "last_result"], help=f"fits to run: {list(FITS)}")
@@ -589,6 +681,7 @@ def main(argv=None):
     ap.add_argument("--summarise", metavar="DIR")
     ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
     ap.add_argument("--district-oracle", action="store_true")
+    ap.add_argument("--transfer-oracle", action="store_true", help="vote-transfer district rules vs share swings")
     ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
     args = ap.parse_args(argv)
     if args.rescore_districts:
@@ -604,6 +697,13 @@ def main(argv=None):
         pd.set_option("display.width", 250)
         for h in args.horizons:
             calibrate_polling_error(args.calibrate, horizon=h)
+        return
+    if args.transfer_oracle:
+        df = transfer_oracle()
+        pd.set_option("display.width", 220)
+        for table, g in df.groupby("table", sort=False):
+            print(f"\n{table} ({g['election'].iloc[0]}, {g['kind'].iloc[0]})")
+            print(g.drop(columns=["election", "table", "kind"]).round(2).to_string(index=False))
         return
     if args.district_oracle:
         df = district_oracle()

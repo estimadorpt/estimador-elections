@@ -55,6 +55,93 @@ def blend_swing(
     return w * prop + (1 - w) * unif
 
 
+def load_transfer_matrix(
+    path: str,
+    parties: Sequence[str],
+    merge: Optional[Dict[str, Dict[str, float]]] = None,
+    less_than_one: float = 0.25,
+):
+    """Read a vote-transfer (outflow) table and return (T, abstainer_row).
+
+    The CSV has one row per current vote intention (column `to`) and one column per group at
+    the previous election, each column summing to ~100 (where that group's voters go). A
+    column named `Abstained` is the previous election's non-voters.
+
+    `merge` folds lists that ran separately into one party, e.g. {"AD": {"PSD": .87, "CDS": .13}}:
+    source columns are averaged with those weights (their previous national votes) and the
+    destination rows are summed. Destinations outside `parties` (don't know, blank, others)
+    are dropped and each column renormalised, so undecided respondents are assumed to split
+    like the decided ones in the same group.
+
+    Returns T (P, P) with T[k, j] = share of previous party k's voters now voting j (rows sum
+    to 1; identity for a party with no column), and the abstainers' row (P,) or None.
+    """
+    raw = pd.read_csv(path, dtype=str).set_index("to")
+    tab = raw.apply(lambda c: c.str.strip().map(lambda x: less_than_one if x == "<1" else float(x)))
+    for party, parts in (merge or {}).items():
+        tab[party] = sum(w * tab[p] for p, w in parts.items())
+        rows = [p for p in parts if p in tab.index]
+        if rows:
+            tab.loc[party] = tab.loc[rows].sum()
+            tab = tab.drop(index=rows)
+        tab = tab.drop(columns=list(parts))
+    dest = tab.reindex(list(parties)).fillna(0.0)
+    T = np.eye(len(parties))
+    for k, p in enumerate(parties):
+        if p in dest.columns and dest[p].sum() > 0:
+            T[k] = dest[p].values / dest[p].sum()
+    abst = None
+    if "Abstained" in dest.columns:
+        abst = dest["Abstained"].values / dest["Abstained"].sum()
+    return T, abst
+
+
+def transfer_swing(
+    national: np.ndarray,
+    last_national: np.ndarray,
+    last_district: np.ndarray,
+    transfer: np.ndarray,
+    weight_proportional: float = 1.0,
+    abstainer_row: Optional[np.ndarray] = None,
+    abstainer_ratio: Optional[np.ndarray] = None,
+    abstainer_ratio_national: Optional[float] = None,
+    abstainer_share: float = 0.0,
+) -> np.ndarray:
+    """District shares from national shares, swinging from vote flows instead of shares.
+
+    Each district's last result is first pushed through the transfer matrix (rows: previous
+    party, columns: current party), so a party gains most where the parties it draws from
+    were strong. The projected district and national shares then go through `blend_swing`,
+    which rescales them to the national draws.
+
+    Optionally the previous election's abstainers join as a source: `abstainer_ratio` (D,) is
+    abstainers / party votes per district at the last election, `abstainer_ratio_national` the
+    same ratio for the whole country, `abstainer_row` (P,) where returning abstainers go, and
+    `abstainer_share` the fraction of current party votes they supply nationally.
+
+    With the identity matrix and no abstainers this is exactly `blend_swing`.
+    national (S, P), last_national (P,), last_district (D, P) -> (S, D, P).
+
+    Not used by the forecast: with the true national result given, national transfer tables
+    from polls (and from a 35,000-voter exit poll) did worse than blend swing on district MAE
+    in 2022, 2024 and 2025 (`src/evaluation/backtest.py --transfer-oracle`).
+    """
+    last_national = np.asarray(last_national, float)
+    last_district = np.asarray(last_district, float)
+    T = np.asarray(transfer, float)
+    z = last_district @ T
+    Z = last_national @ T
+    if abstainer_share > 0:
+        if abstainer_row is None or abstainer_ratio is None or abstainer_ratio_national is None:
+            raise ValueError("abstainer_share needs abstainer_row, abstainer_ratio and abstainer_ratio_national")
+        a = np.asarray(abstainer_row, float)
+        R = float(abstainer_ratio_national)
+        c = abstainer_share / ((1 - abstainer_share) * R)  # returning share of the abstainers
+        z = z + c * np.asarray(abstainer_ratio, float)[:, None] * a[None, :]
+        Z = Z + c * R * a
+    return blend_swing(national, Z / Z.sum(), z / z.sum(1, keepdims=True), weight_proportional)
+
+
 def add_district_noise(
     shares: np.ndarray,
     party_sd: np.ndarray,

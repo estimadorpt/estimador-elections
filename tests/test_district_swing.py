@@ -7,9 +7,53 @@ from src.processing.district_swing import (
     blend_swing,
     calibrate_noise,
     dhondt_draws,
+    load_transfer_matrix,
     seats_from_district_shares,
+    transfer_swing,
 )
 from src.processing.electoral_systems import calculate_dhondt
+
+
+def test_transfer_swing_with_identity_is_blend_swing():
+    rng = np.random.default_rng(3)
+    last_dist = rng.dirichlet(np.ones(5) * 3, size=7)
+    weights = rng.uniform(1, 5, size=7)
+    last_nat = (weights[:, None] * last_dist).sum(0) / weights.sum()
+    nat = rng.dirichlet(np.ones(5) * 20, size=4)
+    for w in (1.0, 0.5, 0.0):
+        np.testing.assert_allclose(
+            transfer_swing(nat, last_nat, last_dist, np.eye(5), weight_proportional=w),
+            blend_swing(nat, last_nat, last_dist, w),
+            atol=1e-12,
+        )
+
+
+def test_transfer_swing_moves_gains_to_where_donors_were_strong():
+    # party 2 doubles nationally, drawing only from party 0: it should gain more in the district
+    # where party 0 was strong than proportional swing gives it
+    last_dist = np.array([[0.6, 0.3, 0.1], [0.2, 0.7, 0.1]])
+    last_nat = last_dist.mean(0)
+    nat = np.array([[last_nat[0] - 0.1, last_nat[1], last_nat[2] + 0.1]])
+    T = np.array([[0.75, 0.0, 0.25], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    tr = transfer_swing(nat, last_nat, last_dist, T)[0]
+    prop = blend_swing(nat, last_nat, last_dist, 1.0)[0]
+    assert tr[0, 2] > prop[0, 2] and tr[1, 2] < prop[1, 2]
+    np.testing.assert_allclose(tr.sum(1), 1.0)
+
+
+def test_load_transfer_matrix_merges_lists_and_drops_undecided(tmp_path):
+    p = tmp_path / "t.csv"
+    p.write_text(
+        "to,PSD,CDS,PS,Abstained\n"
+        "PSD,80,40,10,30\nCDS,10,40,0,10\nPS,5,10,80,40\nNão sabe,5,10,10,20\n"
+    )
+    T, abst = load_transfer_matrix(str(p), ["AD", "PS"], merge={"AD": {"PSD": 0.9, "CDS": 0.1}})
+    # AD source = 0.9 PSD + 0.1 CDS column; AD destination = PSD + CDS rows; undecided dropped
+    ad_to_ad = 0.9 * 90 + 0.1 * 80
+    ad_to_ps = 0.9 * 5 + 0.1 * 10
+    np.testing.assert_allclose(T[0], [ad_to_ad / (ad_to_ad + ad_to_ps), ad_to_ps / (ad_to_ad + ad_to_ps)])
+    np.testing.assert_allclose(T[1], [10 / 90, 80 / 90])
+    np.testing.assert_allclose(abst, [40 / 80, 40 / 80])
 
 
 def test_dhondt_textbook_example():

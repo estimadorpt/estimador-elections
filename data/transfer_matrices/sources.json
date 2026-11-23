@@ -1,0 +1,10 @@
+{
+  "what": "Vote-transfer (outflow) tables: share of each previous-election group (column) by current vote intention (row). Columns sum to 100 up to rounding. Transcribed by hand from the ERC deposit PDFs and checked against the page images.",
+  "less_than_one": "'<1' is read as 0.25 (rounded to the unit, so it lies in [0, 0.5)).",
+  "tables": {
+    "cesop_2022026.csv": {"election": "2022-01-30", "previous": "2019-10-06", "pollster": "UCP/CESOP", "erc_deposit": "2022026", "deposited": "2022-01-27", "file": "Relatório Sondagem 4 janeiro 2022 CESOP RTP Antena 1 Publico.pdf", "page": 9, "kind": "pre-election poll", "merge": {"AD": {"PSD": 0.868, "CDS": 0.132}}, "merge_basis": "2019 national votes PPD/PSD 1,420,644 and CDS-PP 216,454 (data/legislativas_2019.parquet)"},
+    "cesop_2024038.csv": {"election": "2024-03-10", "previous": "2022-01-30", "pollster": "CESOP-UCP", "erc_deposit": "2024038", "deposited": "2024-03-07", "file": "Relatório Sondagem mar 2024 CESOP RTP Antena 1 Público.pdf", "page": 11, "kind": "pre-election poll", "merge": {"AD": {"PSD": 0.948, "CDS": 0.052}}, "merge_basis": "2022 national votes PPD/PSD plus PSD/CDS coalitions 1,577,809 and CDS-PP 86,577 (data/legislativas_2022.parquet)"},
+    "cesop_2025057.csv": {"election": "2025-05-18", "previous": "2024-03-10", "pollster": "UCP/CESOP", "erc_deposit": "2025057", "deposited": "2025-05-15", "file": "Relatório Sondagem 15 maio 2025 CESOP RTP Antena 1 Publico.pdf", "page": 9, "kind": "pre-election poll"},
+    "cesop_exit_2025062.csv": {"election": "2025-05-18", "previous": "2024-03-10", "pollster": "UCP/CESOP", "erc_deposit": "2025062", "deposited": "2025-05-18", "file": "Caracterização votantes Legislativas_2025.pdf", "page": 15, "kind": "exit poll (election-night information, not a forecast input); 35,022 mainland respondents", "inflow_from_abstention_pct": {"AD": 4, "PS": 4, "CH": 11, "IL": 5, "L": 6, "CDU": 2, "BE": 9, "PAN": 7}, "inflow_page": 14}
+  }
+}
