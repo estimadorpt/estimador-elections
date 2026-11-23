@@ -300,6 +300,11 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
     party["seats_in90"] = (lo <= true_tot) & (true_tot <= hi) if S > 1 else np.nan
     p_exact = (tot == true_tot[None, :]).mean(0)
     party["seat_logscore"] = -np.log(np.clip(p_exact, 1 / (2 * S), None))
+    # ranked probability score of each party's seat total: sum over k of (P(seats <= k) - 1[true <= k])^2
+    ks = np.arange(int(max(tot.max(), true_tot.max())) + 1)
+    cdf = (tot[:, None, :] <= ks[None, :, None]).mean(0)  # (K, P)
+    obs = (true_tot[None, :] <= ks[:, None]).astype(float)
+    party["seat_rps"] = ((cdf - obs) ** 2).sum(0)
     winner_true = int(np.argmax(true_tot))
     winners = np.argmax(tot + 1e-3 * pred_dist.sum(1), axis=1)  # tie-break by votes
     vote_winner_true = int(np.argmax(y))
@@ -322,6 +327,8 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
         seat_logscore=float(party.loc[r, "seat_logscore"].mean()),
         p_seat_winner=float((winners == winner_true).mean()),
         p_vote_winner=float((np.argmax(pred_nat, 1) == vote_winner_true).mean()),
+        seat_rps=float(party.loc[r, "seat_rps"].mean()),
+        winner_logscore=float(-np.log(max((winners == winner_true).mean(), 1 / (2 * S)))),
     )
     return summary, party
 
@@ -577,6 +584,34 @@ def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
     return n
 
 
+PAIRED_METRICS = ["nat_crps", "nat_mae", "seat_rps", "seat_logscore", "winner_logscore"]
+
+
+def compare(out_dir: str, a: str, b: str, metrics: Sequence[str] = PAIRED_METRICS) -> pd.DataFrame:
+    """Per-election differences a - b (negative: a is better) for each horizon and metric.
+
+    With five elections a mean hides everything; the table shows each election and how many
+    elections `a` won, which is what the backtest can actually tell apart.
+    """
+    path = os.path.join(out_dir, "scores.csv")
+    if not os.path.exists(path):
+        summarise(out_dir)
+    df = pd.read_csv(path)
+    rows = []
+    for h, g in df.groupby("horizon"):
+        A = g[g.model == a].set_index("election")
+        B = g[g.model == b].set_index("election")
+        common = A.index.intersection(B.index)
+        for m in metrics:
+            if m not in A or m not in B:
+                continue
+            d = (A.loc[common, m] - B.loc[common, m]).dropna()
+            row = {"horizon": h, "metric": m, "a_better": int((d < 0).sum()), "n": int(len(d)), "mean_diff": d.mean()}
+            row.update({str(e)[:4]: v for e, v in d.items()})
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def summarise(out_dir: str) -> pd.DataFrame:
     rows = []
     for f in sorted(os.listdir(out_dir)):
@@ -592,7 +627,8 @@ def summarise(out_dir: str) -> pd.DataFrame:
     df = rescore_ballot_parties(df, parties)
     df.to_csv(os.path.join(out_dir, "scores.csv"), index=False)
     cols = ["nat_mae", "nat_mae_big", "nat_crps", "nat_cov50", "nat_cov90", "dist_mae", "seat_mae",
-            "dist_seats_misallocated", "seat_cov90", "seat_logscore", "p_seat_winner"]
+            "dist_seats_misallocated", "seat_cov90", "seat_logscore", "seat_rps", "p_seat_winner"]
+    cols = [c for c in cols if c in df]
     agg = df.groupby(["model", "horizon"])[cols].mean().round(3)
     agg.to_csv(os.path.join(out_dir, "scores_by_model_horizon.csv"))
     parties.to_csv(os.path.join(out_dir, "parties.csv"), index=False)
@@ -654,7 +690,12 @@ def main(argv=None):
     ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
     ap.add_argument("--district-oracle", action="store_true")
     ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
+    ap.add_argument("--compare", nargs=3, metavar=("DIR", "A", "B"), help="per-election differences A - B")
     args = ap.parse_args(argv)
+    if args.compare:
+        pd.set_option("display.width", 250)
+        print(compare(*args.compare).round(3).to_string(index=False))
+        return
     if args.rescore_districts:
         print(f"rescored {rescore_districts(args.rescore_districts, args.seed)} variants")
         pd.set_option("display.width", 250)
