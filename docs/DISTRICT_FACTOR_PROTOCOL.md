@@ -94,3 +94,46 @@ Under the amended rule, the log-share noise could not be a baseline: tuned for C
 coverage gates (0.58 for district shares, 0.84 for seat totals at 7 days), so the rule gives no
 verdict against it.
 
+## Regional poll crosstabs: measured, and stopped
+
+Code: `src/evaluation/crosstab_measurement.py` (reads the ERC deposits and the NUTS file, which live
+outside this repository; the command is in its docstring).
+
+The stop rule was fixed before measuring: stop if the pooled effective sample is under 10,000, or if
+a pollster's regional deviation from its own national figure lies more than 0.07 (rms, log scale)
+from the true deviation. **The sample fails in every election; the bias sits at the threshold overall
+and above it in 2024 and 2025. Regional crosstabs are not modelled.**
+
+| Election | Pollsters with regional tables | Respondents naming a party | Bias, rms log (90% interval) |
+|---|---|---|---|
+| 2011 | 3 | 6,600 | 0.050 (0.021–0.072) |
+| 2015 | 3 | 9,100 | 0.045 (0.037–0.057) |
+| 2022 | 1 | 600 | not measured |
+| 2024 | 3 | 5,500 | 0.077 (0.059–0.093) |
+| 2025 | 4 | 7,200 | 0.098 (0.045–0.186) |
+
+- **The data.** 156 deposits fall in the final 8 weeks before these elections; 61 hold a usable
+  regional vote table. 2019, and all but one 2022 deposit, were never read by the v2 parser. CESOP,
+  ICS/ISCTE and most Aximage deposits have no regional vote table. 13 tables were misread: 10
+  Pitagórica tracker tables had every value one label to the left (realigned), 3 Consulmark tables
+  repeat the total inside the table (dropped). Region definitions come from the fichas técnicas:
+  Marktest's and Intercampus's 2011 "Grande Lisboa" and "Grande Porto" are the old NUTS-III areas
+  (20% and 11–13% of their samples), not the metropolitan areas.
+- **Sample.** Distinct interviews that name a party (a rolling tracker counts only its new
+  interviews). The measured design effect is 0.80 (0.65–1.04): a pollster's regional figures scatter
+  less from table to table than random samples would, probably from weighting. That lifts 2015 to
+  11,400 and leaves the others under 10,000. If every poll in the final 8 weeks had published a usable
+  regional table, the pool would still be 12,000–19,000, short of the 20,000–40,000 the simulation
+  needed for a gain of 0.4–1.4 seats with no bias at all.
+- **Bias.** 0.072 (0.052–0.096) over all pollster-elections, 0.082 if the sampling correction uses the
+  measured design effect. By pollster it runs from about zero (Eurosondagem 2015, Intercampus 2025) to
+  0.19 (Aximage 2024) and 0.30 (Metris 2025, eight weeks out).
+- **Pooling does not remove it, and history cannot correct it.** On the regions several pollsters
+  share, their pooled error is 0.10 in 2024 and 0.08 in 2025 (in 2024 every pollster had IL too high
+  in Porto and too low in Lisbon); the simulation halved the gain at 0.05 and fell below blend swing
+  at 0.10. A pollster's regional errors do not repeat from one election to the next (correlation
+  −0.39 to +0.17 over 8–20 cells), so house effects fitted on earlier elections, the planned model,
+  would have nothing to learn.
+
+What would reopen it: 2019 and 2022 read by the parser, a pool of regional tables above 20,000
+respondents, and regional errors under 0.05 that repeat by pollster.
