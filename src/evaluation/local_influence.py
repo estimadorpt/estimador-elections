@@ -32,6 +32,12 @@ from src.processing.district_swing import blend_swing, seats_from_district_share
 
 PARISH_ELECTIONS = ["2015-10-04", "2019-10-06", "2022-01-30", "2024-03-10", "2025-05-18"]
 SMOOTH = 0.5  # pseudo-votes per party, so an empty cell has a log
+# The run as first registered fitted every cell with no intercept. Review (23 Nov) found two
+# faults: cells with no votes at t-1 or t (no list, or none cast) carry log residuals of 5-11
+# and dominate the fit, and without a party intercept the national log change in both M2
+# features forces gamma = -delta. The corrected fit drops those cells and absorbs a party x
+# election mean; `--as-registered` reproduces the first run.
+FIT = {"drop_zero_cells": True, "party_intercepts": True}
 BUFFER_DEG = 0.0003  # ~30 m: absorbs the web simplification of shared borders
 
 
@@ -173,8 +179,8 @@ def stack(d: Data, targets: List, keys: List[str], weights: str = "parish"):
     election on the same map) are skipped. weights: "parish" = the parish's votes at t (the
     pre-registered rule); "party" = the party's expected votes there (votes x blend share),
     the inverse sampling variance of a log share (post hoc)."""
-    X, y, w, cl, pj = [], [], [], [], []
-    for t in targets:
+    X, y, w, cl, pj, gr = [], [], [], [], [], []
+    for ti, t in enumerate(targets):
         f = features(d, t)
         if any(k not in f for k in keys):
             continue
@@ -183,6 +189,8 @@ def stack(d: Data, targets: List, keys: List[str], weights: str = "parish"):
         for k in keys:
             ok &= np.isfinite(f[k])
         ok &= (d.national[t].values > 1e-3)[None, :]
+        if FIT["drop_zero_cells"]:
+            ok &= (d.votes[t] > 0) & (d.votes[d.prev(t)] > 0)
         if weights == "parish":
             wt = np.broadcast_to(d.tot(t)[:, None], r.shape)
         else:
@@ -193,9 +201,16 @@ def stack(d: Data, targets: List, keys: List[str], weights: str = "parish"):
         w.append(wt[ok])
         cl.append(np.broadcast_to(d.municipality[:, None], r.shape)[ok])
         pj.append(np.broadcast_to(np.arange(r.shape[1])[None, :], r.shape)[ok])
+        gr.append((ti * 100 + np.broadcast_to(np.arange(r.shape[1])[None, :], r.shape))[ok])
     if not X:
         return None
-    return np.vstack(X), np.concatenate(y), np.concatenate(w), np.concatenate(cl), np.concatenate(pj)
+    X, y, w, cl, pj, gr = np.vstack(X), *map(np.concatenate, (y, w, cl, pj, gr))
+    if FIT["party_intercepts"]:  # absorb a party x election mean (weighted within-group demeaning)
+        for g in np.unique(gr):
+            m = gr == g
+            X[m] -= np.average(X[m], axis=0, weights=w[m])
+            y[m] -= np.average(y[m], weights=w[m])
+    return X, y, w, cl, pj
 
 
 def fit(data, pooled: bool, n_parties: int):
@@ -213,8 +228,8 @@ def fit(data, pooled: bool, n_parties: int):
 
 
 def wls(X, y, w, clusters) -> Tuple[np.ndarray, np.ndarray]:
-    """Coefficients (no intercept: the national result already fixes the mean) and
-    municipality-clustered standard errors."""
+    """Slopes (any party intercept is already absorbed by `stack`) and municipality-clustered
+    standard errors."""
     sw = np.sqrt(w / w.mean())
     A = X * sw[:, None]
     b = y * sw
@@ -239,9 +254,16 @@ def predict_parish(d: Data, t, mech: Optional[str], beta: Optional[np.ndarray], 
     f = features(d, t)
     corr = np.zeros_like(b1)
     beta = np.asarray(beta)
+    wprev = d.tot(d.prev(t))
     for i, k in enumerate(MECHS[mech]):
         bk = beta[i] if beta.ndim == 1 else beta[:, i][None, :]
-        corr += bk * np.nan_to_num(f[k], nan=0.0)
+        fk = f[k].copy()
+        if FIT["party_intercepts"]:  # the slope acts on within-party variation only
+            for j in range(fk.shape[1]):
+                ok = np.isfinite(fk[:, j])
+                if ok.any():
+                    fk[ok, j] -= np.average(fk[ok, j], weights=np.clip(wprev[ok], 1, None))
+        corr += bk * np.nan_to_num(fk, nan=0.0)
     x = np.where(b1 <= 1e-9, 0.0, np.clip(b1, 1e-9, None) * np.exp(corr))
     return x / np.clip(x.sum(1, keepdims=True), 1e-12, None)
 
@@ -425,8 +447,11 @@ def main(argv=None):
     ap.add_argument("--web-dir", default=os.environ.get("ESTIMADOR_WEB", os.path.join("..", "estimador-web")))
     ap.add_argument("--out", default=None, help="write the tables as CSV into this folder")
     ap.add_argument("--variants", nargs="+", default=list(VARIANTS), choices=list(VARIANTS))
+    ap.add_argument("--as-registered", action="store_true", help="the first run: every cell, no intercept")
     a = ap.parse_args(argv)
     checks = ["learned", "oracle", "chega", "strategic"] if a.all else a.checks
+    if a.as_registered:
+        FIT.update(drop_zero_cells=False, party_intercepts=False)
     out = {}
     if checks == ["strategic"]:
         df = strategic_check()
