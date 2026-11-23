@@ -73,6 +73,19 @@ def test_calibrate_noise_uses_only_earlier_elections():
     assert np.allclose(sd, 0.0)  # d0 -> d1 had no district change
 
 
+def test_calibrate_noise_skips_districts_where_a_party_had_no_list():
+    # C stands everywhere in both elections except district 0 in the second: that zero is a missing
+    # list, not swing noise, and must not inflate C's sd (PAN in Viseu, 2025)
+    parties = ["A", "B", "C"]
+    d0, d1, d2 = (pd.Timestamp(x) for x in ("2019-01-01", "2022-01-01", "2024-01-01"))
+    rows = [[0.5, 0.45, 0.05], [0.45, 0.5, 0.05], [0.5, 0.45, 0.05]]
+    dist = {d0: pd.DataFrame(rows, columns=parties)}
+    dist[d1] = pd.DataFrame([[0.52, 0.48, 0.0]] + rows[1:], columns=parties)
+    nat = {d: pd.Series([0.48, 0.47, 0.05], index=parties) for d in (d0, d1)}
+    sd = calibrate_noise(dist, nat, d2, parties, floor=0.0)
+    assert sd[2] < 0.1
+
+
 def test_seats_from_district_shares_shapes():
     shares = np.random.default_rng(0).dirichlet(np.ones(4), size=(10, 3))
     seats = seats_from_district_shares(shares, [2, 5, 9])

@@ -17,6 +17,7 @@ Usage
         --elections 2015-10-04 2019-10-06 2022-01-30 2024-03-10 2025-05-18 \
         --horizons 56 28 7 --draws 500 --tune 500 --out outputs/backtest/WIP_run
     python -m src.evaluation.backtest --district-oracle   # swing rules given the true national result
+    python -m src.evaluation.backtest --rescore-districts DIR   # rescore blend variants from saved draws
     python -m src.evaluation.backtest --summarise outputs/backtest/WIP_run
 """
 
@@ -396,7 +397,7 @@ def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFr
     """Recompute party-level metrics over the parties on the ballot only (true share > 0).
 
     Runs scored before this rule averaged over all 8 parties, which in 2015 included Chega and
-    IL (not on the ballot). The per-party rows hold everything needed; district MAE is rescaled
+    IL (not on the ballot); the PS/AD/CH error then also counted Chega's zero. The per-party rows hold everything needed; district MAE is rescaled
     by 8 / parties on the ballot, exact when the absent parties were forecast at ~0.
     """
     out = df.copy()
@@ -411,6 +412,9 @@ def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFr
         n_all = len(PARTIES)
         err = sel["err"].abs()
         out.loc[i, "nat_mae"] = err.mean()
+        big = sel[sel["party"].isin(["PS", "AD", "CH"])]
+        if not big.empty:
+            out.loc[i, "nat_mae_big"] = big["err"].abs().mean()
         out.loc[i, "nat_rmse"] = float(np.sqrt((sel["err"] ** 2).mean()))
         out.loc[i, "nat_max_err"] = err.max()
         out.loc[i, "nat_crps"] = sel["crps"].mean()
@@ -419,7 +423,8 @@ def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFr
                 out.loc[i, c_out] = sel[c_in].astype(float).mean()
         out.loc[i, "seat_mae"] = sel["seat_err"].abs().mean()
         out.loc[i, "seat_logscore"] = sel["seat_logscore"].mean()
-        if "ran" not in parties.columns and len(sel) < n_all:
+        scored_all_parties = "ran" not in sel.columns or sel["ran"].isna().all()  # an older run
+        if scored_all_parties and len(sel) < n_all:
             out.loc[i, "dist_mae"] = row["dist_mae"] * n_all / len(sel)
     return out
 
@@ -466,6 +471,46 @@ def calibrate_polling_error(
         o = pd.concat(picks)
         print(model, "leave-one-election-out tau:", list(o.tau_chosen), o[cols].mean().round(3).to_dict())
     return df
+
+
+def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
+    """Re-derive and rescore every blend-swing variant from the saved national draws.
+
+    For each `<fit>__<election>__h<horizon>__national.npy`, the variants of that fit whose district
+    rule is "blend" or "blend_noise" are scored again with the current district code, keeping the
+    rest of their summary (fit diagnostics, poll counts). Use after a change to the district rule
+    or its noise calibration; no refit needed. Returns the number of variants rescored.
+    """
+    _, _, seats_map = load_truth()
+    n = 0
+    for f in sorted(os.listdir(out_dir)):
+        if not f.endswith("__national.npy"):
+            continue
+        fit_name, target, h = f[: -len("__national.npy")].split("__")
+        if fit_name not in FITS:
+            continue
+        nat = np.load(os.path.join(out_dir, f)).astype(float)
+        nat = nat / nat.sum(-1, keepdims=True)
+        for variant, rule in FITS[fit_name][2].items():
+            if rule not in ("blend", "blend_noise"):
+                continue
+            tag = f"{variant}__{target}__{h}"
+            path = os.path.join(out_dir, tag + ".json")
+            if not os.path.exists(path):
+                continue
+            with open(path) as fh:
+                saved = json.load(fh)
+            dist = districts_from_national(nat, target, noise=(rule == "blend_noise"), seed=seed)
+            summary, party = score(nat, dist, target, seats_map)
+            saved["summary"].update(summary)
+            party.insert(0, "model", variant)
+            party.insert(1, "election", target)
+            party.insert(2, "horizon", int(h[1:]))
+            party.to_csv(os.path.join(out_dir, tag + "__parties.csv"), index=False)
+            with open(path, "w") as fh:
+                json.dump(saved, fh, indent=1, default=str)
+            n += 1
+    return n
 
 
 def summarise(out_dir: str) -> pd.DataFrame:
@@ -544,7 +589,13 @@ def main(argv=None):
     ap.add_argument("--summarise", metavar="DIR")
     ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
     ap.add_argument("--district-oracle", action="store_true")
+    ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
     args = ap.parse_args(argv)
+    if args.rescore_districts:
+        print(f"rescored {rescore_districts(args.rescore_districts, args.seed)} variants")
+        pd.set_option("display.width", 250)
+        print(summarise(args.rescore_districts).to_string())
+        return
     if args.summarise:
         pd.set_option("display.width", 250)
         print(summarise(args.summarise).to_string())

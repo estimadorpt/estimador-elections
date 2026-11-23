@@ -74,9 +74,17 @@ def test_rescore_leaves_out_parties_not_on_the_ballot():
                          seats_in90=True, seat_err=0.0 if absent else 4.0, seat_logscore=1.0))
     parties = pd.DataFrame(rows)
     df = pd.DataFrame([dict(model="m", election="2015-10-04", horizon=56, nat_mae=1.5, dist_mae=0.75,
-                            nat_cov50=0.75, nat_cov90=0.75)])
+                            nat_cov50=0.75, nat_cov90=0.75, nat_mae_big=4 / 3)])
     out = rescore_ballot_parties(df, parties).iloc[0]
     assert out["nat_mae"] == 2.0
+    assert out["nat_mae_big"] == 2.0  # PS and AD only, not Chega's zero
     assert out["nat_cov90"] == 1.0
     assert out["seat_mae"] == 4.0
     assert out["dist_mae"] == 0.75 * 8 / 6
+    # mixed with a newer run's rows, which carry `ran`, the older run is still rescaled
+    newer = parties.assign(model="new", ran=parties["true"] > 0)
+    both = pd.concat([parties, newer], ignore_index=True)
+    df2 = pd.concat([df, df.assign(model="new")], ignore_index=True)
+    out2 = rescore_ballot_parties(df2, both).set_index("model")
+    assert out2.loc["m", "dist_mae"] == 0.75 * 8 / 6
+    assert out2.loc["new", "dist_mae"] == 0.75

@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 EPS = 1e-6
+STOOD = 1e-4  # a district share below this means the party had no list there
 
 
 def blend_swing(
@@ -78,7 +79,7 @@ def calibrate_noise(
     """Party sd of log(true/blend) district residuals over elections before `before`.
 
     Each election after the first known one is predicted from the previous with its own true
-    national shares. A party's sd is shrunk toward the all-party sd with `pool` pseudo
+    national shares. Districts where the party had no list in either election are left out. A party's sd is shrunk toward the all-party sd with `pool` pseudo
     elections; parties never measured get the pooled value.
     """
     dates = sorted(d for d in district_shares if d < before)
@@ -90,9 +91,15 @@ def calibrate_noise(
             district_shares[prev].values,
         )[0]
         true = district_shares[cur].values
+        before_d = district_shares[prev].values
         for j, p in enumerate(parties):
             if national_shares[cur][p] > 0.005 and national_shares[prev][p] > 0.005:
-                e = np.log(np.clip(true[:, j], EPS, None)) - np.log(np.clip(pred[:, j], EPS, None))
+                # a district where the party did not stand in either election says nothing about
+                # swing noise (PAN had no list in Viseu in 2025: log(0) would set its sd to 2)
+                stood = (true[:, j] > STOOD) & (before_d[:, j] > STOOD)
+                if stood.sum() < 2:
+                    continue
+                e = np.log(true[stood, j]) - np.log(np.clip(pred[stood, j], EPS, None))
                 errs[p].append(np.mean(e**2))
     allv = [v for p in parties for v in errs[p]]
     pooled = np.sqrt(np.mean(allv)) if allv else 0.25
