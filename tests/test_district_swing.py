@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 import pandas as pd
 
@@ -77,3 +78,29 @@ def test_seats_from_district_shares_shapes():
     seats = seats_from_district_shares(shares, [2, 5, 9])
     assert seats.shape == (10, 3, 4)
     assert (seats.sum(-1) == np.array([2, 5, 9])[None, :]).all()
+
+
+def test_district_posterior_reproduces_last_result_when_nothing_moves():
+    xr = pytest.importorskip("xarray")
+    from src.evaluation.backtest import load_truth
+    from src.processing.district_swing import district_posterior_from_national
+
+    try:
+        district, national, _ = load_truth()
+    except Exception as e:  # results files not available
+        pytest.skip(f"no results data: {e}")
+    last = max(national)
+    parties = ["AD", "PS", "CH", "IL", "L", "CDU", "BE", "PAN"]  # a different order on purpose
+    nat = xr.DataArray(
+        np.broadcast_to(national[last][parties].values, (2, 3, 8)).copy(),
+        dims=("chain", "draw", "parties_complete"),
+        coords={"chain": [0, 1], "draw": [0, 1, 2], "parties_complete": parties},
+    )
+    out = district_posterior_from_national(nat, "2029-10-07", noise=False)
+    assert out.dims == ("chain", "draw", "districts", "parties_complete")
+    np.testing.assert_allclose(
+        out.isel(chain=1, draw=2).values, district[last][parties].values, atol=1e-9
+    )
+    noisy = district_posterior_from_national(nat, "2029-10-07", noise=True)
+    np.testing.assert_allclose(noisy.sum("parties_complete"), 1.0)
+    assert float(noisy.std(["chain", "draw"]).max()) > 0

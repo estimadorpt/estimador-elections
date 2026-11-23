@@ -122,3 +122,49 @@ def dhondt_draws(shares: np.ndarray, seats: int) -> np.ndarray:
 def seats_from_district_shares(shares: np.ndarray, district_seats: Sequence[int]) -> np.ndarray:
     """shares (S, D, P), seats per district (D,) -> (S, D, P) seats."""
     return np.stack([dhondt_draws(shares[:, d, :], int(k)) for d, k in enumerate(district_seats)], axis=1)
+
+
+def district_posterior_from_national(
+    national,
+    target_date,
+    noise: bool = True,
+    weight_proportional: float = 0.5,
+    seed: int = 0,
+):
+    """District shares (chain, draw, districts, parties_complete) by blend swing, for `predict`.
+
+    national: xarray DataArray (chain, draw, parties_complete) of national shares at the date
+    being forecast (polling error, if any, already added). Districts swing from the last
+    election before `target_date`; with `noise`, each district-party share gets the
+    calibrated noise of `calibrate_noise` measured on every earlier election.
+    """
+    import xarray as xr
+
+    from src.evaluation.backtest import PARTIES, load_truth
+
+    district, national_hist, _ = load_truth()
+    target = pd.Timestamp(target_date)
+    last = max(t for t in national_hist if t < target)
+    parties = [str(p) for p in national.coords["parties_complete"].values]
+    missing = [p for p in parties if p not in PARTIES]
+    if missing:
+        raise ValueError(f"No district results for parties {missing}")
+    nat = national.transpose("chain", "draw", "parties_complete").values
+    n_chain, n_draw, n_party = nat.shape
+    flat = nat.reshape(-1, n_party)
+    last_d = district[last][parties]
+    shares = blend_swing(flat, national_hist[last][parties].values, last_d.values, weight_proportional)
+    if noise:
+        sd_all = calibrate_noise(district, national_hist, target, PARTIES)
+        sd = np.array([sd_all[PARTIES.index(p)] for p in parties])
+        shares = add_district_noise(shares, sd, np.random.default_rng(seed))
+    return xr.DataArray(
+        shares.reshape(n_chain, n_draw, len(last_d.index), n_party),
+        dims=("chain", "draw", "districts", "parties_complete"),
+        coords={
+            "chain": national.coords["chain"].values,
+            "draw": national.coords["draw"].values,
+            "districts": list(last_d.index),
+            "parties_complete": parties,
+        },
+    )

@@ -904,10 +904,22 @@ def predict(args):
         # Determine which method to call based on the actual model instance type
         if isinstance(model_instance, DynamicGPElectionModel) and hasattr(model_instance, 'get_district_vote_share_posterior'):
             print(f"\nCalculating District Vote Share Posterior (mode: {args.prediction_date_mode})...")
-            district_shares_posterior = model_instance.get_district_vote_share_posterior(
-                idata=elections_model.trace,
-                date_mode=args.prediction_date_mode
-            )
+            if getattr(args, "district_rule", "model") == "blend":
+                from src.processing.district_swing import district_posterior_from_national
+                print("District rule: blend swing from the last election, with calibrated district noise.")
+                national_for_districts = model_instance.get_latent_popularity(
+                    idata=elections_model.trace, date_mode=args.prediction_date_mode
+                )
+                district_shares_posterior = (
+                    None
+                    if national_for_districts is None
+                    else district_posterior_from_national(national_for_districts, model_instance.election_date)
+                )
+            else:
+                district_shares_posterior = model_instance.get_district_vote_share_posterior(
+                    idata=elections_model.trace,
+                    date_mode=args.prediction_date_mode
+                )
             if district_shares_posterior is None:
                  print("Could not retrieve district vote shares. Skipping seat predictions.")
                  # --- ADDED: Also skip district forecast JSON generation --- 
@@ -1625,6 +1637,15 @@ def main(args=None):
         default=0.0,
         help="Election-level polling error added to the forecast draws: sd of each party's shift on the "
         "log scale (0 = off). Calibrated by `python -m src.evaluation.backtest --calibrate`.",
+    )
+    pred_group.add_argument(
+        "--district-rule",
+        choices=["model", "blend"],
+        default="model",
+        help="How district shares are derived for seats: 'model' uses the model's static district offsets; "
+        "'blend' moves the last election's district results by a 50/50 proportional/uniform swing of the "
+        "national draws, with district noise calibrated on past elections (7.4 misallocated seats per "
+        "election in the 2015-2025 backtest with the true national result, against 12.0 for the offsets).",
     )
     pred_group.add_argument(
         "--skip-comparison-in-predict",
