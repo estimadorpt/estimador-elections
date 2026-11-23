@@ -7,9 +7,11 @@ national shares, district shares and district seats, and is scored against E's r
 This replaces `--cutoff-date` / `--mode cross-validate` for retrodiction: both load every
 historical result, so the target election's own result is in the fit.
 
-Seats are scored on the 20 domestic districts with the 2024 seat map (226 seats) for every
-election, against D'Hondt applied to E's actual district votes with the same map. That isolates
-the error of the vote model from changes in the seat map; emigration seats are left out.
+Seats are scored on the 20 domestic districts (226 seats) with E's own seat map
+(`src.data.seat_maps`), against D'Hondt applied to E's actual district votes with the same map;
+emigration seats are left out. Until 23 Nov 2026 every election was scored with one fixed map,
+the 2019/2022 one (a file labelled 2024 that missed Setúbal's 19th seat); `--seat-map 2022-01-30`
+reproduces those scores.
 
 Usage
 -----
@@ -51,6 +53,8 @@ PARTIES = ["PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD"]
 RIGHT_BLOC = ["AD", "IL", "CH"]
 ALL_ELECTIONS = ["2009-09-27", "2011-06-05", "2015-10-04", "2019-10-06", "2022-01-30", "2024-03-10", "2025-05-18"]
 BACKTEST_ELECTIONS = ["2015-10-04", "2019-10-06", "2022-01-30", "2024-03-10", "2025-05-18"]
+# "election": score each election with its own seat map; a date: that election's map for all
+SEAT_MAP = "election"
 
 
 # ----------------------------------------------------------------------------------------
@@ -61,7 +65,8 @@ _TRUTH_CACHE: Dict = {}
 
 
 def load_truth() -> Tuple[Dict[pd.Timestamp, pd.DataFrame], Dict[pd.Timestamp, pd.Series], pd.Series]:
-    """District shares (D x P), national shares (P) per election, and the 2024 seat map."""
+    """District shares (D x P), national shares (P) per election, and a seat map whose index
+    fixes the district order (use `seats_for(E, index)` for an election's own seats)."""
     if _TRUTH_CACHE:
         return _TRUTH_CACHE["district"], _TRUTH_CACHE["national"], _TRUTH_CACHE["seats"]
     from src.data.flexible_loaders import load_election_results_flexible
@@ -78,6 +83,17 @@ def load_truth() -> Tuple[Dict[pd.Timestamp, pd.DataFrame], Dict[pd.Timestamp, p
         district[t] = x.div(x.sum(1), axis=0)
     _TRUTH_CACHE.update(district=district, national=national, seats=seats)
     return district, national, seats
+
+
+def seats_for(election, index) -> np.ndarray:
+    """Seats per district for scoring `election`, in the order of `index` (see SEAT_MAP)."""
+    from src.data.seat_maps import seat_map
+
+    which = str(pd.Timestamp(election).date()) if SEAT_MAP == "election" else SEAT_MAP
+    m = seat_map(which).reindex(index)
+    if m.isna().any() or int(m.sum()) != 226:
+        raise ValueError(f"seat map for {which} does not cover the districts")
+    return m.to_numpy(int)
 
 
 # ----------------------------------------------------------------------------------------
@@ -297,8 +313,9 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
             )
         )
     party = pd.DataFrame(rows)
-    true_seats_d = seats_from_district_shares(yd[None], seats_map.values)[0]  # (D,P)
-    seat_draws_d = seats_from_district_shares(pred_dist, seats_map.values)  # (S,D,P)
+    seats_d = seats_for(E, seats_map.index)
+    true_seats_d = seats_from_district_shares(yd[None], seats_d)[0]  # (D,P)
+    seat_draws_d = seats_from_district_shares(pred_dist, seats_d)  # (S,D,P)
     tot = seat_draws_d.sum(1)
     true_tot = true_seats_d.sum(0)
     party["true_seats"] = true_tot
@@ -771,9 +788,10 @@ def district_oracle() -> pd.DataFrame:
         st = np.exp(lat - lat.max(1, keepdims=True))
         rules["static_offsets"] = st / st.sum(1, keepdims=True)
         true_d = district[E].values
-        true_seats = seats_from_district_shares(true_d[None], seats_map.values)[0]
+        seats_d = seats_for(E, seats_map.index)
+        true_seats = seats_from_district_shares(true_d[None], seats_d)[0]
         for name, pred in rules.items():
-            ps = seats_from_district_shares(pred[None], seats_map.values)[0]
+            ps = seats_from_district_shares(pred[None], seats_d)[0]
             rows.append(
                 dict(
                     election=str(E.date()),
@@ -800,9 +818,14 @@ def main(argv=None):
     ap.add_argument("--calibrate", metavar="DIR", help="score saved draws with added polling error")
     ap.add_argument("--error-forms", nargs="+", default=["iid"], choices=sorted(ERROR_FORMS), help="error shapes for --calibrate")
     ap.add_argument("--district-oracle", action="store_true")
+    ap.add_argument(
+        "--seat-map", default="election", help="'election' (each election's own map, default) or a date whose map scores all"
+    )
     ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
     ap.add_argument("--compare", nargs=3, metavar=("DIR", "A", "B"), help="per-election differences A - B")
     args = ap.parse_args(argv)
+    global SEAT_MAP
+    SEAT_MAP = args.seat_map
     if args.compare:
         pd.set_option("display.width", 250)
         print(compare(*args.compare).round(3).to_string(index=False))
