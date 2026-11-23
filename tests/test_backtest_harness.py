@@ -51,6 +51,23 @@ def test_build_rw_model_has_finite_logp():
         assert np.isfinite(logp)
 
 
+def test_rw_architecture_options_build_and_centre():
+    import pymc as pm
+
+    data = prepare_rw_data(_toy_polls(), _toy_results(), "2020-03-01", ["2019-10-06"], PARTIES, RWConfig())
+    cfg = RWConfig(pollster_concentration=True, house_drift_sd_prior=0.05)
+    model = build_rw_model(data, cfg)
+    assert np.isfinite(model.compile_logp()(model.initial_point()))
+    assert {"pollster_concentration", "house_drift", "sigma_house_drift"} <= set(model.named_vars)
+    drift = pm.draw(model["house_drift"], random_seed=1)  # (cycles, pollsters, parties)
+    np.testing.assert_allclose(drift.sum(axis=2), 0.0, atol=1e-9)  # zero-sum over parties
+    np.testing.assert_allclose(drift.sum(axis=1), 0.0, atol=1e-9)  # and over the active pollsters
+    active = np.zeros(drift.shape[:2], bool)
+    active[data.poll_cycle, data.poll_pollster] = True
+    assert (drift[~active] == 0).all() and np.abs(drift[active]).max() > 0
+    assert pm.draw(model["pollster_concentration"], random_seed=1).shape == (len(data.pollsters),)
+
+
 @pytest.mark.optional
 def test_backtest_dataset_has_no_future_information():
     from src.evaluation.backtest import make_dataset

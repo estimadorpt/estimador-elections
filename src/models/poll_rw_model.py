@@ -63,6 +63,16 @@ class RWConfig:
     # (rw_nobias_bloc, 23 Nov 2026) the data put its weekly sd at about 0.006, against ~0.03 for
     # each party's own step, and it scored slightly worse on national, seat and right-bloc CRPS.
     bloc_swing_sd_prior: float = 0.0
+    # Architecture options under test (Nov 2026), both off by default:
+    # * pollster_concentration: each pollster gets its own Dirichlet-multinomial concentration
+    #   (log-normal around the shared one, as the GP's `pollster_concentration`), so a noisy firm
+    #   weighs less than its sample size says;
+    # * house_drift_sd_prior: a pollster's house effect may move from one election cycle to the
+    #   next (HalfNormal scale of the per-cycle deviation; 0 = one house effect for 17 years).
+    #   The deviations sum to zero over parties and over the pollsters active in each cycle, so
+    #   they never add an industry-wide bias.
+    pollster_concentration: bool = False
+    house_drift_sd_prior: float = 0.0
 
 
 @dataclass
@@ -212,6 +222,17 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         sigma_house = pm.HalfNormal("sigma_house", sigma=cfg.house_sd_prior, dims="parties")
         house_raw = pm.ZeroSumNormal("house_raw", sigma=1.0, dims=("pollsters", "parties"), n_zerosum_axes=2)
         house = pm.Deterministic("house", house_raw * sigma_house[None, :], dims=("pollsters", "parties"))
+        house_polls = house[data.poll_pollster]
+        if cfg.house_drift_sd_prior > 0:
+            active = np.zeros((C, J))
+            active[data.poll_cycle, data.poll_pollster] = 1.0
+            n_active = np.maximum(active.sum(1, keepdims=True), 1.0)
+            sigma_drift = pm.HalfNormal("sigma_house_drift", sigma=cfg.house_drift_sd_prior)
+            drift_raw = pm.Normal("house_drift_raw", 0.0, 1.0, dims=("cycles", "pollsters", "parties"))
+            d = drift_raw - drift_raw.mean(axis=2, keepdims=True)
+            d = d - (d * active[:, :, None]).sum(axis=1, keepdims=True) / n_active[:, :, None]
+            drift = pm.Deterministic("house_drift", sigma_drift * d * active[:, :, None], dims=("cycles", "pollsters", "parties"))
+            house_polls = house_polls + drift[data.poll_cycle, data.poll_pollster]
 
         # industry bias per cycle
         sigma_bias = pm.HalfNormal("sigma_bias", sigma=cfg.bias_sd_prior)
@@ -226,12 +247,18 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
             poll_mask = np.where(data.poll_reported, 0.0, MASK_LOG)
         else:
             poll_mask = log_mask[data.poll_t]
-        logits_polls = eta[data.poll_t] + house[data.poll_pollster] + bias[data.poll_cycle] + poll_mask
+        logits_polls = eta[data.poll_t] + house_polls + bias[data.poll_cycle] + poll_mask
         p_polls = pt.special.softmax(logits_polls, axis=1)
         conc = pm.Gamma("concentration_polls", alpha=cfg.poll_concentration_prior[0], beta=cfg.poll_concentration_prior[1])
+        conc_polls = conc
+        if cfg.pollster_concentration:
+            sigma_pc = pm.HalfNormal("sigma_pollster_concentration", sigma=0.5)
+            pc_raw = pm.Normal("pollster_concentration_raw", 0.0, 1.0, dims="pollsters")
+            conc_j = pm.Deterministic("pollster_concentration", conc * pt.exp(sigma_pc * pc_raw), dims="pollsters")
+            conc_polls = conc_j[data.poll_pollster][:, None]
         n_polls = data.poll_counts.sum(1)
         pm.DirichletMultinomial(
-            "poll_obs", n=n_polls, a=conc * p_polls + 1e-10, observed=data.poll_counts, dims=("polls", "parties")
+            "poll_obs", n=n_polls, a=conc_polls * p_polls + 1e-10, observed=data.poll_counts, dims=("polls", "parties")
         )
 
         if len(data.result_t):

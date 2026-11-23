@@ -219,7 +219,9 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     model = build_rw_model(data, cfg)
     idata = _sample(model, draws, tune, chains, seed, target_accept=0.9)
     nat = national_share_draws(idata, data)
-    diag = _diagnostics(idata, var_names=["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"])
+    diag_vars = ["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"]
+    diag_vars += [v for v in ("sigma_house_drift", "sigma_pollster_concentration") if v in idata.posterior]
+    diag = _diagnostics(idata, var_names=diag_vars)
     bias = idata.posterior["bias"].mean(("chain", "draw")).to_pandas()
     extra = {
         "sigma_bloc": float(idata.posterior["sigma_bloc"].mean()) if "sigma_bloc" in idata.posterior else None,
@@ -229,6 +231,12 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
         "bias_by_cycle": {c: bias.loc[c].round(3).to_dict() for c in bias.index},
         "cfg": asdict(cfg),
     }
+    post = idata.posterior
+    if "sigma_house_drift" in post:
+        extra["sigma_house_drift"] = round(float(post["sigma_house_drift"].mean()), 4)
+    if "pollster_concentration" in post:
+        extra["sigma_pollster_concentration"] = round(float(post["sigma_pollster_concentration"].mean()), 3)
+        extra["pollster_concentration"] = post["pollster_concentration"].median(("chain", "draw")).to_series().round(1).to_dict()
     return {"national": nat, "district": None, "diag": diag, "extra": extra}
 
 
@@ -458,6 +466,10 @@ FITS = {
     ),
     # a learned mean bias that carries forward, plus a per-cycle deviation around it
     "rw_hybrid": ("rw", {"persistent_bias": True, "persistent_bias_sd": 0.3}, {"rw_hybrid": "blend_noise"}),
+    # architecture tests (Nov 2026), each rw_nobias plus one option: a concentration per pollster,
+    # and house effects that may move between election cycles
+    "rw_nobias_pconc": ("rw", {"bias_sd_prior": 1e-3, "pollster_concentration": True}, {"rw_nobias_pconc": "blend_noise"}),
+    "rw_nobias_hdrift": ("rw", {"bias_sd_prior": 1e-3, "house_drift_sd_prior": 0.05}, {"rw_nobias_hdrift": "blend_noise"}),
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
     "latest_per_firm": ("latest_per_firm", {}, {"latest_per_firm": "blend"}),
