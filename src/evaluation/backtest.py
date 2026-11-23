@@ -599,6 +599,11 @@ def calibration_verdict(chosen: pd.DataFrame, untouched: pd.DataFrame) -> Dict[s
     }
     out: Dict[str, object] = {k: round(v, 3) for k, v in got.items()}
     out["pass"] = bool(all(lo <= got[k] <= hi for k, (lo, hi) in CALIBRATION_GATE.items()))
+    # for ranking models at their calibrated tau (crps_ratio only compares a model with itself, and
+    # a point forecast's ratio is against zero spread)
+    out["nat_crps"] = round(float(chosen["nat_crps"].mean()), 3)
+    if "seat_rps" in chosen:
+        out["seat_rps"] = round(float(chosen["seat_rps"].mean()), 3)
     return out
 
 
