@@ -21,6 +21,28 @@ from src.evaluation.metrics import (
 )
 
 
+
+def hsgp_sqrt_psd(hsgp, kernel: str, amplitude, lengthscale, sqrt_psd_pymc):
+    """Square root of an HSGP's spectral density, with a finite gradient for ExpQuad.
+
+    PyMC returns sqrt(psd). For ExpQuad, psd = amp^2 * sqrt(2 pi) * ls * exp(-(ls * w)^2 / 2)
+    underflows to exactly 0 for the highest basis frequencies when the lengthscale is long
+    relative to the domain: in a 2015 backtest the baseline GP has ls ~ 1,460 days and
+    w_35 ~ 0.033, so the exponent is about -1,200. The gradient of sqrt at 0 is inf, times a
+    zero derivative gives NaN, and NUTS cannot start (step size 1e-233, every draw divergent).
+    Computing amp * exp(log(psd_unit) / 2) gives the same values and a zero gradient there.
+    Matern kernels have polynomial tails and keep PyMC's value.
+    """
+    if kernel != "ExpQuad":
+        return sqrt_psd_pymc
+    eigvals = pm.gp.hsgp_approx.calc_eigenvalues(hsgp.L, hsgp._m)
+    omega = pt.sqrt(eigvals)[:, 0]
+    log_psd_unit = 0.5 * np.log(2.0 * np.pi) + pt.log(lengthscale) - 0.5 * pt.square(lengthscale * omega)
+    sqrt_psd = amplitude * pt.exp(0.5 * log_psd_unit)
+    first = int(getattr(hsgp, "_drop_first", False) is True)
+    return sqrt_psd[first:]
+
+
 class DynamicGPElectionModel(BaseElectionModel):
     """
     A Bayesian election model combining a long-term baseline GP over calendar time
@@ -480,6 +502,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_baseline, m=baseline_hsgp_m, c=baseline_hsgp_c
             )
             phi_baseline, sqrt_psd_baseline = self.gp_baseline_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_baseline = hsgp_sqrt_psd(
+                self.gp_baseline_time, self.baseline_gp_config["kernel"],
+                baseline_gp_amplitude_sd, baseline_gp_lengthscale, sqrt_psd_baseline,
+            )
 
             coord_name_gp_basis_base = "gp_basis_baseline"
             if coord_name_gp_basis_base not in model.coords:
@@ -522,6 +548,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_medium_term, m=medium_term_hsgp_m, c=medium_term_hsgp_c
             )
             phi_medium_term, sqrt_psd_medium_term = self.gp_medium_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_medium_term = hsgp_sqrt_psd(
+                self.gp_medium_term_time, medium_term_gp_kernel,
+                medium_term_gp_amplitude_sd, medium_term_gp_lengthscale, sqrt_psd_medium_term,
+            )
 
             coord_name_gp_basis_medium = "gp_basis_medium_term"
             if coord_name_gp_basis_medium not in model.coords:
@@ -565,6 +595,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_very_short_term, m=very_short_term_hsgp_m, c=very_short_term_hsgp_c
             )
             phi_very_short_term, sqrt_psd_very_short_term = self.gp_very_short_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_very_short_term = hsgp_sqrt_psd(
+                self.gp_very_short_term_time, very_short_term_gp_kernel,
+                very_short_term_gp_amplitude_sd, very_short_term_gp_lengthscale, sqrt_psd_very_short_term,
+            )
 
             coord_name_gp_basis_very_short = "gp_basis_very_short_term"
             if coord_name_gp_basis_very_short not in model.coords:
@@ -808,7 +842,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                  concentration_national_results = pm.Gamma("concentration_national_results", alpha=100, beta=0.1)
 
                  # Get the national latent probability at the times of the national results
-                 p_results_national = latent_popularity_national[data_containers["calendar_time_result_national_idx"]]
+                 # Index with the constant array, not the data container: with a single national
+                 # result (a 2015 backtest knows only 2011) PyTensor cannot tell the length-1 index
+                 # will not broadcast, and the gradient fails at run time.
+                 p_results_national = latent_popularity_national[np.asarray(self.calendar_time_result_national_id, dtype=int)]
 
                  pm.DirichletMultinomial(
                      "result_national_likelihood",
