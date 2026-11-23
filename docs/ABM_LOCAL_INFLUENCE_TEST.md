@@ -82,3 +82,25 @@ neighbours' earlier share, in parishes with at least 1,000 voters, with district
 effects. It informs the explanation; it is not a gate.
 
     python -m src.evaluation.local_influence --all
+
+## 7. Addendum, written before running it: strategic desertion in small districts
+
+The other voter-level mechanism that could move district shares is strategic voting: voters
+desert a party that cannot win a seat in their district and come back when it can (Cox's
+M+1 logic; Gschwend 2007 estimates that a party which won no seat in a Portuguese district
+loses about 3% of its vote there, more where magnitude is small). The static part of that is
+already in blend swing, because last election's offsets include last election's desertion. What
+blend cannot see is a change in viability: a party crossing a small district's effective
+threshold should gain more than its swing, and one falling below it should lose more.
+
+- **Viability** v(s, M) = logistic((s − T) / (0.2 T)), with T = 0.75 / (M + 1), the effective
+  threshold for magnitude M (2024 seat map).
+- **Feature** Δv = v(B0's predicted share at t, M) − v(true share at t−1, M); everything in it
+  is known before the election once the national result is given.
+- **Rule S**: B0 with θ · Δv added to the log share, then renormalised. θ is pooled over
+  parties, fitted by least squares on log(true/B0) weighted by district magnitude, on earlier
+  transitions only. District results 2009–2025 give transitions from 2009→2011; learned
+  targets are 2015, 2019, 2022, 2024 and 2025. An oracle fit on the target is reported as
+  the ceiling.
+- **Decision**: the same as section 5 (at least 0.03 pp better mean district MAE than B0 over
+  the learned targets, fewer seats misallocated, no target worse by more than 0.02 pp).
