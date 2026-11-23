@@ -20,6 +20,12 @@ the same rules:
    at 2 or more horizons in at least 3 of 5 elections; seat-total RPS no more than 1% worse at any
    horizon; both coverage gates hold.
 
+Amended 23 Nov 2026 after the first run (the district noise): a target where a variant has no
+earlier pair of elections to calibrate on (2011: the results start in 2009) is reported but not
+counted when either side calibrates on history; and the coverage gates bind the baseline too, so
+no candidate is judged against a baseline that fails them. Since that run the baseline is the
+share-scale noise ("sqrt"); "current" is the log-share noise it replaced.
+
     python -m src.evaluation.district_protocol --stage A
     python -m src.evaluation.district_protocol --stage B --national-dir DIR   # <fit>__<date>__hNNN__national.npy
     python -m src.evaluation.district_protocol --stage AB --national-dir DIR --out OUT
@@ -37,7 +43,12 @@ import numpy as np
 import pandas as pd
 
 from src.evaluation.backtest import PARTIES, load_truth
-from src.processing.district_swing import blend_swing, calibrate_noise, seats_from_district_shares
+from src.processing.district_swing import (
+    blend_swing,
+    calibrate_noise,
+    calibrate_sqrt_noise,
+    seats_from_district_shares,
+)
 from src.processing.polling_error import add_polling_error
 
 # NUTS-II regions of the 20 domestic circles (1 Norte, 2 Centro, 3 Lisboa/AML + Santarem + Setubal,
@@ -69,6 +80,8 @@ class Variant:
     name: str
     grid: Dict[str, Sequence]
     sample: Callable
+    # True when the variant calibrates something on elections before the target
+    history: bool = False
     params_list: List[Dict] = field(init=False)
 
     def __post_init__(self):
@@ -119,10 +132,21 @@ def sqrt_noise(national, target, p, z, zr):
     return x / np.clip(x.sum(-1, keepdims=True), EPS, None)
 
 
+def sqrt_hist_noise(national, target, p, z, zr):
+    """The model's rule: share-scale noise with c from earlier elections only (calibrate_sqrt_noise)."""
+    district, nat_hist, seats = load_truth()
+    c = calibrate_sqrt_noise(district, nat_hist, pd.Timestamp(target), seats.values, weight_proportional=p["w"])
+    return sqrt_noise(national, target, dict(p, c=c), z, zr)
+
+
 VARIANTS = {
     "current": Variant(
-        "current", {"w": (0.25, 0.5, 0.75), "k": (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2)}, current_noise
+        "current",
+        {"w": (0.25, 0.5, 0.75), "k": (0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 1.0, 1.2)},
+        current_noise,
+        history=True,
     ),
+    "sqrt_hist": Variant("sqrt_hist", {"w": (0.25, 0.5, 0.75)}, sqrt_hist_noise, history=True),
     "sqrt": Variant(
         "sqrt", {"w": (0.25, 0.5, 0.75), "c": (0.02, 0.025, 0.03, 0.035, 0.04, 0.045, 0.05, 0.06)}, sqrt_noise
     ),
@@ -132,8 +156,17 @@ VARIANTS = {
         sqrt_noise,
     ),
 }
-# the variant every candidate is compared against
-BASELINE = "current"
+# the variant every candidate is compared against (the log-share noise "current" until 23 Nov 2026)
+BASELINE = "sqrt"
+COVERAGE_GATE_A = (0.80, 0.97)
+COVERAGE_GATE_B = 0.85
+
+
+def no_history_targets() -> List[str]:
+    """Targets with fewer than two earlier elections in the data: nothing to calibrate on."""
+    _, national, _ = load_truth()
+    dates = sorted(national)
+    return [str(t.date()) for t in dates if sum(d < t for d in dates) < 2]
 
 
 # ----------------------------------------------------------------------------------------
@@ -302,6 +335,10 @@ def decide(a: pd.DataFrame, b: pd.DataFrame, cand: str, base: str = BASELINE,
     """The keep rule. `targets` restricts stage A to a subset (for a sensitivity line only)."""
     A = a.set_index(["variant", "target"])
     targets = sorted(targets if targets is not None else a.target.unique())
+    skipped = []
+    if VARIANTS[cand].history or VARIANTS[base].history:
+        skipped = [t for t in targets if t in no_history_targets()]
+        targets = [t for t in targets if t not in skipped]
     da = np.array([A.loc[(base, t), "share_crps"] - A.loc[(cand, t), "share_crps"] for t in targets])
     gain = da / np.array([A.loc[(base, t), "share_crps"] for t in targets])
     clusters = []
@@ -310,22 +347,27 @@ def decide(a: pd.DataFrame, b: pd.DataFrame, cand: str, base: str = BASELINE,
         clusters += [rb[r] - rc[r] for r in rb]
     p = sign_flip_p(np.array(clusters))
     cov_a = A.loc[cand, "share_cov90"].loc[targets]
+    cov_base = A.loc[base, "share_cov90"].loc[targets]
     out = dict(
         candidate=cand,
+        baseline=base,
+        A_not_counted=skipped,
         A_better_elections=int((da > 0).sum()),
         A_n_elections=len(targets),
         A_mean_gain_pct=round(float(gain.mean() * 100), 2),
         A_sign_flip_p=round(p, 4),
         A_cov90_mean=round(float(cov_a.mean()), 3),
-        A_baseline_cov90_mean=round(float(A.loc[base, "share_cov90"].loc[targets].mean()), 3),
+        A_baseline_cov90_mean=round(float(cov_base.mean()), 3),
     )
+    lo, hi = COVERAGE_GATE_A
+    out["A_baseline_gate"] = bool(lo <= cov_base.mean() <= hi)
     out["A_pass"] = bool(out["A_better_elections"] >= 4 and out["A_mean_gain_pct"] >= 3 and p < 0.05
-                         and cov_a.mean() >= 0.80 and cov_a.mean() <= 0.97)
+                         and lo <= cov_a.mean() <= hi)
     if b is not None and len(b):
         B = b.set_index(["variant", "target", "horizon"])
         wins = {}
         worst_total = -np.inf
-        cov_b = []
+        cov_b, cov_b_base = [], []
         for t in sorted(b.target.unique()):
             hs = [h for h in sorted(b.horizon.unique()) if (cand, t, h) in B.index and (base, t, h) in B.index]
             wins[t] = sum(B.loc[(cand, t, h), "dist_seat_rps"] < B.loc[(base, t, h), "dist_seat_rps"] for h in hs)
@@ -334,15 +376,22 @@ def decide(a: pd.DataFrame, b: pd.DataFrame, cand: str, base: str = BASELINE,
             sc = b[(b.variant == cand) & (b.horizon == h)].seat_total_rps.mean()
             worst_total = max(worst_total, (sc - sb) / sb * 100)
             cov_b.append(b[(b.variant == cand) & (b.horizon == h)].seat_total_cov90.mean())
+            cov_b_base.append(b[(b.variant == base) & (b.horizon == h)].seat_total_cov90.mean())
         out.update(
             B_elections_better_at_2plus_horizons=int(sum(v >= 2 for v in wins.values())),
             B_n_elections=len(wins),
             B_worst_seat_total_rps_change_pct=round(float(worst_total), 2),
             B_seat_total_cov90_min=round(float(min(cov_b)), 3),
+            B_baseline_seat_total_cov90_min=round(float(min(cov_b_base)), 3),
         )
+        out["B_baseline_gate"] = bool(min(cov_b_base) >= COVERAGE_GATE_B)
         out["B_pass"] = bool(out["B_elections_better_at_2plus_horizons"] >= 3 and worst_total <= 1.0
-                             and min(cov_b) >= 0.85)
-        out["keep"] = bool(out["A_pass"] and out["B_pass"])
+                             and min(cov_b) >= COVERAGE_GATE_B)
+        if not (out["A_baseline_gate"] and out["B_baseline_gate"]):
+            # no verdict against a baseline that fails its own gates: fix the baseline first
+            out["keep"] = None
+        else:
+            out["keep"] = bool(out["A_pass"] and out["B_pass"])
     return out
 
 
@@ -353,14 +402,16 @@ SCORE_COLS = ["share_crps", "share_cov90", "dist_mae", "dist_seat_rps", "seat_to
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stage", default="AB", choices=["A", "B", "AB"])
-    ap.add_argument("--variants", nargs="+", default=["current", "sqrt", "sqrt_region"])
+    ap.add_argument("--baseline", default=BASELINE, choices=sorted(VARIANTS))
+    ap.add_argument("--variants", nargs="+", default=["current", "sqrt_hist", "sqrt_region"])
     ap.add_argument("--national-dir", default=None)
     ap.add_argument("--fit", default="rw_nobias")
     ap.add_argument("--draws", type=int, default=2000)
     ap.add_argument("--out", default=None)
     args = ap.parse_args(argv)
     pd.set_option("display.width", 220)
-    names = list(dict.fromkeys([BASELINE] + args.variants))
+    base = args.baseline
+    names = list(dict.fromkeys([base] + args.variants))
     a, chosen = stage_a(names, S=args.draws)
     print("\n== Stage A (true national), settings chosen leave-one-election-out")
     print(a.pivot(index="variant", columns="target", values="share_crps").round(4).to_string())
@@ -375,16 +426,14 @@ def main(argv=None):
         print(b.groupby(["variant", "horizon"], sort=False)[SCORE_COLS].mean().round(4).to_string())
     print("\n== Stage A per election: district-seat RPS")
     print(a.pivot(index="variant", columns="target", values="dist_seat_rps").round(2).to_string())
-    print("\n== Decision against", BASELINE)
+    print("\n== Decision against", base)
     for n in names:
-        if n != BASELINE:
-            print(decide(a, b, n))
-    # 2011 has one earlier election in the data (2009), so a noise calibrated on past elections has
-    # nothing to learn from there: the same rule on 2015-2025 shows how much 2011 carries
+        if n != base:
+            print(decide(a, b, n, base))
     print("\n== Sensitivity: stage A on 2015-2025 only (not deciding)")
     for n in names:
-        if n != BASELINE:
-            d = decide(a, None, n, targets=[t for t in a.target.unique() if t >= "2015"])
+        if n != base:
+            d = decide(a, None, n, base, targets=[t for t in a.target.unique() if t >= "2015"])
             print({k: v for k, v in d.items() if k.startswith("A_") or k == "candidate"})
     if args.out:
         os.makedirs(args.out, exist_ok=True)

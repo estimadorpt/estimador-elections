@@ -40,9 +40,9 @@ import pandas as pd
 
 from src.config import DATA_DIR
 from src.processing.district_swing import (
-    add_district_noise,
+    add_sqrt_noise,
     blend_swing,
-    calibrate_noise,
+    calibrate_sqrt_noise,
     dhondt_draws,
     seats_from_district_shares,
 )
@@ -348,13 +348,15 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
 
 
 def districts_from_national(nat: np.ndarray, target: str, noise: bool, seed: int = 0) -> np.ndarray:
-    district, national, _ = load_truth()
+    """Blend swing from the last election, plus the share-scale district noise calibrated on
+    earlier elections (the log-share noise until 23 Nov 2026: results scored before then used it)."""
+    district, national, seats = load_truth()
     E = pd.Timestamp(target)
     last = max(t for t in national if t < E)
     shares = blend_swing(nat, national[last].values, district[last].values)
     if noise and nat.shape[0] > 1:
-        sd = calibrate_noise(district, national, E, PARTIES)
-        shares = add_district_noise(shares, sd, np.random.default_rng(seed))
+        c = calibrate_sqrt_noise(district, national, E, seats.values)
+        shares = add_sqrt_noise(shares, c, np.random.default_rng(seed))
     return shares
 
 

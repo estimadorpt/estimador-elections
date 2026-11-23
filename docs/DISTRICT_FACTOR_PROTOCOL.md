@@ -24,6 +24,13 @@ realistic district factor can gain.
    a one-sided sign-flip p below 0.05 over region × election clusters; stage B is better at two or
    more horizons in at least 3 of 5 elections; seat-total RPS is no more than 1% worse at any
    horizon; and both coverage gates hold.
+6. **Amendments** (agreed 23 November 2026, after the first run). A target where either side
+   calibrates on earlier elections and the data hold fewer than two of them (2011: the results
+   start in 2009) is reported but not counted. The coverage gates bind the baseline too: against a
+   baseline that fails them there is no verdict (`keep` is `None`); fix the baseline first.
+
+The baseline is the share-scale district noise (`sqrt`, below). `--baseline current` runs the
+log-share noise it replaced.
 
 ```bash
 python -m src.evaluation.district_protocol --stage AB \
@@ -36,7 +43,10 @@ The current noise is a party log sd from past elections, pooled toward the all-p
 (`calibrate_noise`), times a tuned scale k. The candidate is one parameter c on the share scale,
 s = μ + c√μ z. A third form adds a region-wide share φ = 0.3 of the noise.
 
-**Verdict: passes the rule as written, narrowly. The gain is calibration, not accuracy.**
+**Verdict: passes the rule as written, narrowly. The gain is calibration, not accuracy.** Adopted
+on 23 November 2026, with the amendments above: the model and the backtest now draw district noise
+with `add_sqrt_noise`, c from `calibrate_sqrt_noise` on earlier elections only (0.03 for the next
+election; 0.025–0.035 for the 2015–2025 targets).
 
 Stage A, district-share CRPS in pp (settings chosen leave-one-election-out):
 
@@ -72,3 +82,15 @@ form of the district noise changes seat scores by under 0.5%.
 
 The region-wide share (φ 0.3) scores the same as √p on every line, as expected: it changes how
 districts move together (majority and bloc probabilities), which none of these scores sees.
+
+### The model's rule against the tuned one
+
+The model cannot tune c leave-one-election-out: it takes c from the elections before the target
+(`sqrt_hist`, a normal approximation to the CRPS). It scores like the tuned version: stage A share
+CRPS 0.607 against 0.605, 90% coverage 0.82 against 0.85, and in stage B seat-total coverage 0.92 to
+0.94 at every horizon, the same as the tuned √p.
+
+Under the amended rule, the log-share noise could not be a baseline: tuned for CRPS it fails both
+coverage gates (0.58 for district shares, 0.84 for seat totals at 7 days), so the rule gives no
+verdict against it.
+
