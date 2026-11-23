@@ -88,3 +88,22 @@ def test_rescore_leaves_out_parties_not_on_the_ballot():
     out2 = rescore_ballot_parties(df2, both).set_index("model")
     assert out2.loc["m", "dist_mae"] == 0.75 * 8 / 6
     assert out2.loc["new", "dist_mae"] == 0.75
+
+
+def test_loo_tau_rules_and_calibration_gate():
+    import pandas as pd
+
+    from src.evaluation.backtest import calibration_verdict, loo_tau
+
+    rows = []
+    for E in ["e1", "e2", "e3"]:
+        for tau, crps, cov in [(0.0, 1.0, 0.6), (0.1, 0.9, 0.8), (0.2, 0.95, 0.9), (0.3, 1.1, 0.95)]:
+            rows.append(dict(election=E, tau=tau, nat_crps=crps, nat_cov90=cov, nat_cov90_polled=cov, seat_cov90=0.9))
+    d = pd.DataFrame(rows)
+    assert set(loo_tau(d, "crps").tau_chosen) == {0.1}
+    assert set(loo_tau(d, "coverage").tau_chosen) == {0.2}  # smallest tau reaching 0.85
+    v = calibration_verdict(loo_tau(d, "coverage"), d[d.tau == 0])
+    assert v["pass"] and v["crps_ratio"] == 0.95
+    # coverage 0.8 sits on the gate's lower edge, so the CRPS pick passes too; one notch less fails
+    d.loc[d.tau == 0.1, "nat_cov90_polled"] = 0.79
+    assert not calibration_verdict(loo_tau(d, "crps"), d[d.tau == 0])["pass"]

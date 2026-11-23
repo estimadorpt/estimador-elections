@@ -288,6 +288,9 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
                 hi90=hi90 * 100,
                 in50=bool(lo50 <= y[j] <= hi50) if S > 1 else np.nan,
                 in90=bool(lo90 <= y[j] <= hi90) if S > 1 else np.nan,
+                # a party on the ballot that no poll had reported by the cutoff is forecast at ~0
+                # with a [0, 0] interval; no polling-error size can cover it
+                polled=bool(np.median(pred_nat[:, j]) >= 1e-3),
                 crps=crps_sample(pred_nat[:, j] * 100, y[j] * 100),
             )
         )
@@ -323,6 +326,7 @@ def score(pred_nat: np.ndarray, pred_dist: np.ndarray, target: str, seats_map: p
         nat_crps=float(party.loc[r, "crps"].mean()),
         nat_cov50=float(party.loc[r, "in50"].mean()) if S > 1 else np.nan,
         nat_cov90=float(party.loc[r, "in90"].mean()) if S > 1 else np.nan,
+        nat_cov90_polled=float(party.loc[r & party["polled"].values, "in90"].mean()) if S > 1 else np.nan,
         dist_mae=float(np.abs(pred_dist.mean(0) - yd)[:, ran].mean() * 100),
         seat_mae=float(np.abs(tot.mean(0) - true_tot)[ran].mean()),
         seat_abs_err_total=float(np.abs(tot.mean(0) - true_tot).sum() / 2),
@@ -513,14 +517,15 @@ def calibrate_polling_error(
     out_dir: str,
     models: Sequence[str] = ("gp_masked", "rw"),
     horizon: int = 56,
-    taus: Sequence[float] = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4),
+    taus: Sequence[float] = (0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6),
     seed: int = 1,
 ) -> pd.DataFrame:
     """Score saved national draws with an added election-level polling error of each size.
 
     Reads `<model>__<election>__h<horizon>__national.npy`, adds `add_polling_error(tau)`, derives
     districts by blend swing with noise and rescores. Prints the mean over elections per tau and
-    a leave-one-election-out choice (tau picked by CRPS on the other elections).
+    a leave-one-election-out choice (tau picked by CRPS on the other elections), with a pass or
+    fail against `CALIBRATION_GATE`.
     """
     from src.processing.polling_error import add_polling_error
 
@@ -533,6 +538,8 @@ def calibrate_polling_error(
                 continue
             E = f.split("__")[1]
             nat0 = np.load(os.path.join(out_dir, f))
+            if nat0.shape[0] == 1:  # a point forecast (poll average, last result): give it draws
+                nat0 = np.repeat(nat0, 2000, axis=0)
             for tau in taus:
                 nat = add_polling_error(nat0, tau, rng)
                 summ, _ = score(nat, districts_from_national(nat, E, noise=True), E, seats_map)
@@ -541,16 +548,58 @@ def calibrate_polling_error(
     if df.empty:
         return df
     df.to_csv(os.path.join(out_dir, f"polling_error_h{horizon:03d}.csv"), index=False)
-    cols = ["nat_crps", "nat_cov50", "nat_cov90", "seat_cov90", "seat_logscore", "p_seat_winner"]
+    cols = ["nat_crps", "nat_cov50", "nat_cov90", "nat_cov90_polled", "seat_cov90", "seat_logscore", "seat_rps"]
     print(df.groupby(["model", "tau"])[cols].mean().round(3).to_string())
     for model, d in df.groupby("model"):
-        picks = []
-        for E in d.election.unique():
-            t = d[d.election != E].groupby("tau").nat_crps.mean().idxmin()
-            picks.append(d[(d.election == E) & (d.tau == t)].assign(tau_chosen=t))
-        o = pd.concat(picks)
-        print(model, "leave-one-election-out tau:", list(o.tau_chosen), o[cols].mean().round(3).to_dict())
+        for rule in ("crps", "coverage"):
+            o = loo_tau(d, rule)
+            verdict = calibration_verdict(o, d[d.tau == 0])
+            print(
+                f"{model} h{horizon} tau by {rule}, left out one election at a time: {list(o.tau_chosen)}; "
+                + ", ".join(f"{k} {v}" for k, v in verdict.items())
+            )
     return df
+
+
+def loo_tau(d: pd.DataFrame, rule: str = "crps", target_cov: float = 0.85) -> pd.DataFrame:
+    """For each election, the tau chosen on the other elections, and that election's row at it.
+
+    `crps`: the tau with the lowest mean national CRPS. `coverage`: the smallest tau whose mean 90%
+    coverage (polled parties) reaches `target_cov`, else the widest tau.
+    """
+    picks = []
+    for E in d.election.unique():
+        rest = d[d.election != E].groupby("tau")
+        if rule == "crps":
+            t = rest.nat_crps.mean().idxmin()
+        else:
+            cov = rest.nat_cov90_polled.mean()
+            ok = cov[cov >= target_cov]
+            t = ok.index.min() if len(ok) else cov.index.max()
+        picks.append(d[(d.election == E) & (d.tau == t)].assign(tau_chosen=t))
+    return pd.concat(picks)
+
+
+# Pass marks for a polling-error calibration, chosen leave-one-election-out: the 90% national
+# interval should hold the result 80-97% of the time, the 90% seat interval at least 85%, and the
+# added error should cost at most 3% of CRPS against no added error.
+# National coverage is counted over polled parties (see `score`): an unpolled entrant is a
+# separate defect that no error size fixes. Plain `nat_cov90` is printed beside it.
+CALIBRATION_GATE = {"nat_cov90_polled": (0.80, 0.97), "seat_cov90": (0.85, 1.0), "crps_ratio": (0.0, 1.03)}
+
+
+def calibration_verdict(chosen: pd.DataFrame, untouched: pd.DataFrame) -> Dict[str, object]:
+    """Gate check: `chosen` holds one row per election at its leave-one-out tau, `untouched` the
+    same elections at tau = 0."""
+    got = {
+        "nat_cov90": float(chosen["nat_cov90"].mean()),
+        "nat_cov90_polled": float(chosen["nat_cov90_polled"].mean()),
+        "seat_cov90": float(chosen["seat_cov90"].mean()),
+        "crps_ratio": float(chosen["nat_crps"].mean() / untouched["nat_crps"].mean()),
+    }
+    out: Dict[str, object] = {k: round(v, 3) for k, v in got.items()}
+    out["pass"] = bool(all(lo <= got[k] <= hi for k, (lo, hi) in CALIBRATION_GATE.items()))
+    return out
 
 
 def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
@@ -723,7 +772,7 @@ def main(argv=None):
     if args.calibrate:
         pd.set_option("display.width", 250)
         for h in args.horizons:
-            calibrate_polling_error(args.calibrate, horizon=h)
+            calibrate_polling_error(args.calibrate, models=args.models, horizon=h)
         return
     if args.district_oracle:
         df = district_oracle()
