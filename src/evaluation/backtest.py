@@ -137,14 +137,19 @@ def _diagnostics(idata, var_names=None) -> Dict:
     return out
 
 
-def run_gp_current(ds, target, draws, tune, chains, seed, mask_unreported_parties=False) -> Dict:
-    """The production DynamicGPElectionModel (mask_unreported_parties=False reproduces it as of Nov 2026)."""
+def run_gp_current(
+    ds, target, draws, tune, chains, seed, mask_unreported_parties=False, mask_absent_parties=False
+) -> Dict:
+    """The production DynamicGPElectionModel (both masks off reproduces it as of 22 Nov 2026)."""
     from scipy.special import softmax
     from src.models.dynamic_gp_election_model import DynamicGPElectionModel
 
     with contextlib.redirect_stdout(io.StringIO()):
-        m = DynamicGPElectionModel(ds, mask_unreported_parties=mask_unreported_parties)
+        m = DynamicGPElectionModel(
+            ds, mask_unreported_parties=mask_unreported_parties, mask_absent_parties=mask_absent_parties
+        )
         model = m.build_model()
+        exists_log = m._existence_log_mask() if mask_absent_parties else None
     free = [v.name for v in model.free_RVs]
     keep = free + ["national_trend_pt", "static_district_offset", "house_effects", "poll_bias"]
     idata = _sample(model, draws, tune, chains, seed, target_accept=0.95, var_names=keep)
@@ -153,6 +158,8 @@ def run_gp_current(ds, target, draws, tune, chains, seed, mask_unreported_partie
     trend = idata.posterior["national_trend_pt"].isel(calendar_time=t).stack(s=("chain", "draw")).transpose("s", "parties_complete")
     parties = list(trend["parties_complete"].values)
     trend = trend.values
+    if exists_log is not None:
+        trend = trend + exists_log[t][None, :]
     order = [parties.index(p) for p in PARTIES]
     nat = softmax(trend, axis=1)[:, order]
     off = idata.posterior["static_district_offset"].stack(s=("chain", "draw")).transpose("s", "districts", "parties_complete")
@@ -304,7 +311,11 @@ def districts_from_national(nat: np.ndarray, target: str, noise: bool, seed: int
 # election without noise; "blend_noise" = blend swing plus calibrated district noise.
 FITS = {
     "gp_current": ("gp_current", {}, {"gp_current": "model", "gp_current_blend": "blend_noise"}),
-    "gp_masked": ("gp_current", {"mask_unreported_parties": True}, {"gp_masked": "model", "gp_masked_blend": "blend_noise"}),
+    "gp_masked": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True},
+        {"gp_masked": "model", "gp_masked_blend": "blend_noise"},
+    ),
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
     "rw_nobias": ("rw", {"bias_sd_prior": 1e-3}, {"rw_nobias": "blend_noise"}),
