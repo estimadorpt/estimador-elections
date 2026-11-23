@@ -124,10 +124,11 @@ def seat_map() -> pd.Series:
 def dhondt(votes: Dict[str, float], seats: int, competing: Sequence[str]) -> Tuple[Dict[str, int], dict]:
     """D'Hondt among `competing` lists, with the last seat and the runner-up.
 
-    Ties go to the larger list, then to the earlier one in `competing` (a rule the website's
-    engine copies). Returns the seats per list and the last seat: its list, quotient, the
-    runner-up (the next quotient in line) and the extra votes the runner-up needed to take
-    the seat, everything else equal.
+    Ties go to the list with fewer votes, as the electoral law says (Lei n.º 14/79, art. 16.º),
+    then to the earlier one in `competing`; the website's engine copies the rule. Returns the
+    seats per list and the last seat: its list, quotient, the runner-up (the next quotient in
+    line, of another list) and the extra votes the runner-up needed to take the seat,
+    everything else equal.
     """
     quotients = []
     for i, p in enumerate(competing):
@@ -135,21 +136,36 @@ def dhondt(votes: Dict[str, float], seats: int, competing: Sequence[str]) -> Tup
         if v <= 0:
             continue
         for k in range(1, seats + 1):
-            quotients.append((v / k, v, -i, p, k))
+            # reverse sort: larger quotient first, then fewer votes, then the earlier list
+            quotients.append((v / k, -v, -i, p, k))
     quotients.sort(reverse=True)
     won = {p: 0 for p in competing}
     for q in quotients[:seats]:
         won[q[3]] += 1
+    if len(quotients) < seats:
+        raise ValueError("no list has votes")
     last = quotients[seats - 1]
     # The runner-up is the best next quotient of a list other than the holder: the holder's
     # own next quotient cannot take the seat from itself.
     runner = next((q for q in quotients[seats:] if q[3] != last[3]), None)
     margin = None
     if runner is not None:
-        needed = (last[0] - runner[0]) * runner[4]
-        # one vote more than the gap; the tolerance keeps a whole-vote gap whole despite float error
-        margin = {"list": runner[3], "votes": int(np.floor(needed + 1e-6)) + 1}
+        margin = {"list": runner[3], "votes": votes_to_pass(last, runner)}
     return won, {"list": last[3], "quotient": last[0], "runnerUp": margin}
+
+
+def votes_to_pass(last: tuple, runner: tuple) -> int:
+    """The fewest extra votes that give the runner-up the last seat, everything else equal.
+
+    It needs a larger quotient, or an equal one with fewer votes than the holder (the law's
+    tie rule; with equal votes too the law does not say, so it is not counted as a win). The
+    tolerance keeps a whole-vote gap whole despite float error.
+    """
+    gap = (last[0] - runner[0]) * runner[4]
+    n = int(round(gap))
+    if abs(gap - n) < 1e-6:
+        return n if -runner[1] + n < -last[1] else n + 1
+    return int(np.floor(gap)) + 1
 
 
 def national_shares(year: int) -> Dict[str, float]:
