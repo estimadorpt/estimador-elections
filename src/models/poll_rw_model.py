@@ -262,10 +262,11 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
             tau = pm.LogNormal("short_timescale", mu=np.log(cfg.short_timescale_weeks), sigma=cfg.short_timescale_logsd)
             sigma_short = pm.HalfNormal("sigma_short", sigma=cfg.short_sd_prior, dims="parties")
             if cfg.dynamics == "rw_ou":
-                eps = pm.Normal("z_short", 0.0, 1.0, dims=("time", "parties"))
+                # static shape: JAX's scan needs a concrete length (dims alone are symbolic)
+                eps = pm.Normal("z_short", 0.0, 1.0, shape=(T, P), dims=("time", "parties"))
             elif cfg.dynamics == "rw_m32":
                 model.add_coord("state", ["level", "slope"])
-                eps = pm.Normal("z_short", 0.0, 1.0, dims=("time", "state", "parties"))
+                eps = pm.Normal("z_short", 0.0, 1.0, shape=(T, 2, P), dims=("time", "state", "parties"))
             else:
                 raise ValueError(f"unknown dynamics {cfg.dynamics!r}")
             short = short_term_process(eps, tau, cfg.dynamics, dt=cfg.step_days / 7.0) * sigma_short[None, :]

@@ -62,3 +62,14 @@ def test_short_term_process_has_the_kernel_autocorrelation(dynamics, kernel):
         for k in (1, 2, 4, 8):
             acf = (x[:-k] * x[k:]).mean() / x.var()
             assert abs(acf - kernel(k, tau)) < 0.03
+
+
+@pytest.mark.parametrize("dynamics", ["rw_ou", "rw_m32"])
+def test_short_term_models_sample_with_numpyro(dynamics):
+    # the backtest samples with numpyro (JAX); scan needs static shapes there
+    import pymc as pm
+
+    model = build_rw_model(_toy_data(), RWConfig(dynamics=dynamics))
+    with model:
+        idata = pm.sample(draws=20, tune=20, chains=1, nuts_sampler="numpyro", progressbar=False, random_seed=1)
+    assert np.isfinite(idata.posterior["eta"].values).all()
