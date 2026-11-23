@@ -222,6 +222,7 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     diag = _diagnostics(idata, var_names=["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"])
     bias = idata.posterior["bias"].mean(("chain", "draw")).to_pandas()
     extra = {
+        "sigma_bloc": float(idata.posterior["sigma_bloc"].mean()) if "sigma_bloc" in idata.posterior else None,
         "sigma_rw": idata.posterior["sigma_rw"].mean(("chain", "draw")).to_series().round(4).to_dict(),
         "sigma_bias": float(idata.posterior["sigma_bias"].mean()),
         "concentration_polls": float(idata.posterior["concentration_polls"].mean()),
@@ -445,6 +446,8 @@ FITS = {
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
     "rw_nobias": ("rw", {"bias_sd_prior": 1e-3}, {"rw_nobias": "blend_noise"}),
+    # experiment 3: party movements correlated along left-right (a shared weekly bloc swing)
+    "rw_nobias_bloc": ("rw", {"bias_sd_prior": 1e-3, "bloc_swing_sd_prior": 0.03}, {"rw_nobias_bloc": "blend_noise"}),
     # one industry bias for every cycle, like the GP model's poll_bias (per-cycle spread ~0)
     "rw_static": (
         "rw",
