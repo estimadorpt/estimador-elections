@@ -133,13 +133,13 @@ def _diagnostics(idata, var_names=None) -> Dict:
     return out
 
 
-def run_gp_current(ds, target, draws, tune, chains, seed) -> Dict:
-    """The production DynamicGPElectionModel, unchanged."""
+def run_gp_current(ds, target, draws, tune, chains, seed, mask_unreported_parties=False) -> Dict:
+    """The production DynamicGPElectionModel (mask_unreported_parties=False reproduces it as of Nov 2026)."""
     from scipy.special import softmax
     from src.models.dynamic_gp_election_model import DynamicGPElectionModel
 
     with contextlib.redirect_stdout(io.StringIO()):
-        m = DynamicGPElectionModel(ds)
+        m = DynamicGPElectionModel(ds, mask_unreported_parties=mask_unreported_parties)
         model = m.build_model()
     free = [v.name for v in model.free_RVs]
     keep = free + ["national_trend_pt", "static_district_offset", "house_effects", "poll_bias"]
@@ -300,6 +300,7 @@ def districts_from_national(nat: np.ndarray, target: str, noise: bool, seed: int
 # election without noise; "blend_noise" = blend swing plus calibrated district noise.
 FITS = {
     "gp_current": ("gp_current", {}, {"gp_current": "model", "gp_current_blend": "blend_noise"}),
+    "gp_masked": ("gp_current", {"mask_unreported_parties": True}, {"gp_masked": "model", "gp_masked_blend": "blend_noise"}),
     "rw": ("rw", {}, {"rw": "blend_noise", "rw_no_district_noise": "blend"}),
     "rw_persistent": ("rw", {"persistent_bias": True}, {"rw_persistent": "blend_noise"}),
     "rw_nobias": ("rw", {"bias_sd_prior": 1e-3}, {"rw_nobias": "blend_noise"}),
@@ -318,7 +319,7 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
     t0 = time.time()
     ds = make_dataset(target, as_of)
     if runner == "gp_current":
-        res = run_gp_current(ds, target, draws, tune, chains, seed)
+        res = run_gp_current(ds, target, draws, tune, chains, seed, **kwargs)
     elif runner == "rw":
         res = run_rw(ds, target, draws, tune, chains, seed, kwargs)
     elif runner == "poll_average":

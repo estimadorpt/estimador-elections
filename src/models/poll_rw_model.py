@@ -75,6 +75,7 @@ class RWData:
     result_counts: np.ndarray
     target_t: int
     extra: Dict = field(default_factory=dict)
+    poll_reported: Optional[np.ndarray] = None  # (N, P) bool; None = every existing party reported
 
 
 def _to_grid_index(dates: pd.Series | pd.DatetimeIndex, grid: pd.DatetimeIndex) -> np.ndarray:
@@ -142,6 +143,10 @@ def prepare_rw_data(
     # a poll must not use a party that the grid says does not exist yet
     poll_counts = polls[parties].to_numpy().astype(int)
     poll_counts = np.where(exists[poll_t], poll_counts, 0)
+    # A party with no count in a poll was not reported separately (PAN in 249 polls of
+    # 2011-2018, Livre in 196 of 2015-2022 sit in "others"): it is left out of that poll's
+    # likelihood instead of being read as zero support.
+    poll_reported = poll_counts > 0
 
     result_counts = res[parties].to_numpy().astype(np.int64)
     result_t = _to_grid_index(res["election_date"], grid)
@@ -162,6 +167,7 @@ def prepare_rw_data(
         result_counts=result_counts,
         target_t=len(grid) - 1,
         extra={"first_seen": first_seen},
+        poll_reported=poll_reported,
     )
 
 
@@ -203,12 +209,11 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         else:
             bias = pm.Deterministic("bias", sigma_bias * bias_raw, dims=("cycles", "parties"))
 
-        logits_polls = (
-            eta[data.poll_t]
-            + house[data.poll_pollster]
-            + bias[data.poll_cycle]
-            + log_mask_t[data.poll_t]
-        )
+        if data.poll_reported is not None:
+            poll_mask = np.where(data.poll_reported, 0.0, MASK_LOG)
+        else:
+            poll_mask = log_mask[data.poll_t]
+        logits_polls = eta[data.poll_t] + house[data.poll_pollster] + bias[data.poll_cycle] + poll_mask
         p_polls = pt.special.softmax(logits_polls, axis=1)
         conc = pm.Gamma("concentration_polls", alpha=cfg.poll_concentration_prior[0], beta=cfg.poll_concentration_prior[1])
         n_polls = data.poll_counts.sum(1)

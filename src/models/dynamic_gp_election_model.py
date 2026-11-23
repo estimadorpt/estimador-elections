@@ -37,6 +37,7 @@ class DynamicGPElectionModel(BaseElectionModel):
         district_offset_sd_prior_scale: float = 0.1, # Adjusted default
         # beta_sd_prior_scale: float = 0.5, # NEW sensitivity parameter scale --- COMMENTED OUT
         cycle_gp_max_days: int = 90,
+        mask_unreported_parties: bool = True,
         **kwargs
     ):
         """
@@ -59,6 +60,11 @@ class DynamicGPElectionModel(BaseElectionModel):
 
         # Max days before election for the cycle GP
         self.cycle_gp_max_days = cycle_gp_max_days
+        # A party with a zero in a poll was almost always not reported separately (PAN in 249
+        # polls of 2011-2018, Livre in 196 of 2015-2022, Chega and IL in 34 of 2019), not polled
+        # at 0%. When True those cells leave the poll's likelihood instead of pulling the party's
+        # trend toward zero and its poll_bias toward "polls underestimate it".
+        self.mask_unreported_parties = mask_unreported_parties
 
         # Configuration for the GPs
         self.baseline_gp_config = baseline_gp_config
@@ -622,6 +628,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                                              + house_effect_polls
                                              + poll_bias[None, :] # Add poll_bias here
                                              )
+
+            if self.mask_unreported_parties:
+                reported = data_containers["observed_polls"].get_value(borrow=True) > 0
+                latent_polls = latent_polls + np.where(reported, 0.0, -30.0)
 
             # Apply softmax
             poll_probs = pm.Deterministic("poll_probs", pm.math.softmax(latent_polls, axis=1))
