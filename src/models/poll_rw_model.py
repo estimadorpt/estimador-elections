@@ -59,7 +59,9 @@ class RWConfig:
     entry_lead_days: int = 30  # a party "exists" this many days before its first non-zero share
     # A weekly left-right swing shared by every party of a bloc, on top of each party's own step
     # (HalfNormal scale of its weekly sd; 0 = independent parties). Blocs as in
-    # src.processing.polling_error.LEFT_RIGHT.
+    # src.processing.polling_error.LEFT_RIGHT. Off by default: on six elections at 56 days
+    # (rw_nobias_bloc, 23 Nov 2026) the data put its weekly sd at about 0.006, against ~0.03 for
+    # each party's own step, and it scored slightly worse on national, seat and right-bloc CRPS.
     bloc_swing_sd_prior: float = 0.0
 
 
