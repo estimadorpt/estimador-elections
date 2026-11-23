@@ -15,9 +15,9 @@ have. Even there, survey microdata do not beat blend swing on district error or 
 
 | Test | Blend swing | Best survey variant | Verdict |
 |---|---|---|---|
-| Demographic swing, true (2015–2024) | 0.851 pp, 8.25 seats | 0.833 pp, 8.50 seats | gain under 0.02 pp, seats worse |
-| Survey geography for young parties (8 cases) | best in 7 of 8 | best in 1 of 8 (CH 2024, 0.04 pp) | worse than blend |
-| Regional swing, from the same surveys | 0.851 pp | 0.846 pp at best, up to 1.10 | noise |
+| Demographic and regional swing from the target election's own survey (2015–2024) | 0.851 pp, 8.25 seats | 0.833 pp, 8.50 seats | gain under 0.02 pp, seats worse |
+| Survey geography for young parties (8 cases, 64 comparisons) | best rule in 7 of 8 (uniform in the 8th) | beats blend once (CH 2024, by 0.04 pp) | worse than blend |
+| Regional swing alone, from the same surveys | 0.851 pp | 0.846 pp at best, 1.16 at worst | noise |
 
 District error is the mean absolute error over 20 districts × 8 parties, as in
 `backtest.py --district-oracle`; seats are seats misallocated across districts.
@@ -58,8 +58,9 @@ would produce. Blend swing is multiplied by it (λ = 0.5 or 1), with the true na
 The age gaps are large: in 2024, Chega had 37–39% among under-35s and 5–10% among over-65s in the
 EEP. But districts differ too little in age, sex and education for these gaps to move district
 shares. The demographic swing changes a district's share of a party by 1–5% of that share, about
-0.1–0.3 pp for Chega, against blend errors of 1–2 pp. The regional swing measured by the survey is
-noise: with 50–120 respondents per region in Alentejo and Algarve, it makes things worse unless it
+0.5 pp for Chega in 2024 (one standard deviation), against a blend error of 1.4 pp, and it does not line up with
+blend's errors (in 2024 it makes them slightly worse). The regional swing measured by the survey is
+noise: with 40–150 respondents per wave in Alentejo and in Algarve, it makes things worse unless it
 is shrunk almost to nothing.
 
 ## 2. Young parties: survey geography against their last offsets
@@ -118,14 +119,16 @@ region would cut mainland district error from 0.70 to 0.49 pp and misallocated s
 5.0 per election (2015–2025). That is the most any regional information can give. With realistic
 sampling noise (design effect 2) and shrinkage toward the national swing:
 
-| Pooled respondents with a regional crosstab | Mainland error, pp | Seats misallocated |
-|---|---|---|
-| None (blend) | 0.695 | 7.4 |
-| 5,000 | 0.69 | 7.3 |
-| 10,000 | 0.65 | 7.0 |
-| 20,000 | 0.64 | 6.6 |
-| 40,000 | 0.60 | 6.0 |
-| Exact | 0.49 | 5.0 |
+| Pooled respondents with a regional crosstab | Weight on the crosstab | Mainland error, pp | Seats misallocated |
+|---|---|---|---|
+| None (blend) | | 0.695 | 7.4 |
+| 5,000 | 0.25 | 0.69 | 7.3 |
+| 10,000 | 0.25 | 0.65 | 7.0 |
+| 20,000 | 0.5 | 0.64 | 6.6 |
+| 40,000 | 0.5 | 0.60 | 6.5 |
+| Exact | 1 | 0.49 | 5.0 |
+
+A full weight on the crosstab is worse than blend below 20,000 respondents (1.22 pp at 5,000).
 
 This ignores pollster regional house effects and mismatched region definitions, so it is
 optimistic. A final month gives perhaps 5,000–10,000 respondents with regional tables (Intercampus,
