@@ -168,3 +168,33 @@ def test_env_var_points_the_dataset_at_another_csv(tmp_path, monkeypatch):
     monkeypatch.setenv("ESTIMADOR_WIKIPEDIA_POLLS", str(path))
     dataset = ElectionDataset(election_date="2029-10-07", baseline_timescales=[365], election_timescales=[60])
     assert dataset.polls["date"].max() == pd.to_datetime(fresher["fieldwork_end"]).max()
+
+
+def test_2025_district_results_load_for_the_seat_baseline():
+    # The 2025 file names its columns territory_code/territory_name; the seat
+    # simulation needs its district totals as the baseline.
+    from src.data.loaders import load_election_results
+
+    parties = ["PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD"]
+    districts = load_election_results(["2025-05-18", "2024-03-10"], parties, aggregate_national=False)
+    latest = districts[districts["date"] == pd.Timestamp("2025-05-18")]
+    assert latest["Circulo"].nunique() >= 20
+    assert "Unknown District" not in set(latest["Circulo"])
+    national = load_election_results(["2025-05-18"], parties, aggregate_national=True)
+    assert latest[parties].sum().sum() == national[parties].sum().sum()
+
+
+def test_loads_the_live_feed_format(tmp_path):
+    # estimador-data's feed appends source, entered_at and note, and may hold a
+    # hand-entered poll that Wikipedia later lists too, or a row with no n yet.
+    feed = pd.read_csv(CSV)
+    feed["source"], feed["entered_at"], feed["note"] = "wikipedia", "", ""
+    manual = feed.iloc[[-1]].copy()
+    manual["source"], manual["note"] = "manual", "entered from the press release"
+    incomplete = feed.iloc[[-1]].copy()
+    incomplete["pollster"], incomplete["sample_size"] = "Aximage", None
+    path = tmp_path / "legislative_polls.csv"
+    pd.concat([manual, feed, incomplete]).to_csv(path, index=False)
+    polls = load_wikipedia_polls(str(path))
+    assert len(polls) == len(feed)
+    pd.testing.assert_frame_equal(polls, load_wikipedia_polls(CSV))

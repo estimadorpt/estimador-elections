@@ -209,6 +209,21 @@ def load_wikipedia_polls(path: Optional[str] = None) -> pd.DataFrame:
 
     path = path or os.path.join(DATA_DIR, "wikipedia_legislative_polls.csv")
     df = pd.read_csv(path, parse_dates=["fieldwork_start", "fieldwork_end"])
+    # A live feed (estimador-data's legislative_polls.csv) adds source/entered_at/note
+    # columns and may carry a hand-entered poll that Wikipedia later lists too, or a
+    # row still missing its sample size. Keep one row per poll, Wikipedia's first.
+    shares = df[["PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD"]]
+    usable = df["sample_size"].notna() & df["fieldwork_end"].notna() & (shares.sum(axis=1) >= 50)
+    if (~usable).any():
+        print(f"Skipping {(~usable).sum()} poll(s) in {path} without a sample size, date or shares")
+    df = df[usable].copy()
+    if "source" in df.columns:
+        df = df.sort_values("source", key=lambda s: s.ne("wikipedia"), kind="stable")
+    before = len(df)
+    df = df.drop_duplicates(["pollster", "fieldwork_end"], keep="first")
+    if len(df) < before:
+        print(f"Skipping {before - len(df)} duplicate poll(s) in {path} (same pollster and fieldwork end)")
+    df = df.sort_values(["fieldwork_end", "fieldwork_start"]).reset_index(drop=True)
     df["published_sample_size"] = df["sample_size"]
     df["sample_size"] = effective_sample_sizes(df)
     out = pd.DataFrame({

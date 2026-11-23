@@ -545,7 +545,13 @@ def load_election_results(election_dates, political_families, aggregate_national
             print(f"Error reading parquet file {file}: {e}")
             continue # Skip this file
 
-        # --- Add Circulo Column from territoryCode --- 
+        # The 2025 file names its territory columns in snake case
+        raw_results_df = raw_results_df.rename(columns={
+            old: new for old, new in (("territory_code", "territoryCode"), ("territory_name", "territoryName"))
+            if old in raw_results_df.columns and new not in raw_results_df.columns
+        })
+
+        # --- Add Circulo Column from territoryCode ---
         if 'territoryCode' not in raw_results_df.columns:
              print(f"WARNING: 'territoryCode' column not found in {file}. Cannot determine districts for this file.")
              if not aggregate_national:
