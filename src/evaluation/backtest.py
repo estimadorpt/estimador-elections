@@ -462,6 +462,11 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
             json.dump({"summary": summary, "extra": res["extra"]}, f, indent=1, default=str)
         print(f"done {tag}: nat_mae={summary['nat_mae']:.2f} seat_mae={summary['seat_mae']:.2f} ({fit_seconds}s)")
     np.save(os.path.join(out_dir, f"{fit_name}__{target}__h{horizon:03d}__national.npy"), res["national"].astype(np.float32))
+    if res["district"] is not None and res["district"].shape[0] > 1:  # the model's own districts, for rescoring
+        dist = res["district"]
+        if "districts" in res:
+            dist = dist[:, [res["districts"].index(d) for d in seats_map.index], :]
+        np.save(os.path.join(out_dir, f"{fit_name}__{target}__h{horizon:03d}__district.npy"), dist.astype(np.float32))
 
 
 def rescore_ballot_parties(df: pd.DataFrame, parties: pd.DataFrame) -> pd.DataFrame:
@@ -545,7 +550,8 @@ def calibrate_polling_error(
 
 
 def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
-    """Re-derive and rescore every blend-swing variant from the saved national draws.
+    """Re-derive and rescore every blend-swing variant (and model-district variant whose district
+    draws were saved) from the saved draws.
 
     For each `<fit>__<election>__h<horizon>__national.npy`, the variants of that fit whose district
     rule is "blend" or "blend_noise" are scored again with the current district code, keeping the
@@ -562,8 +568,9 @@ def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
             continue
         nat = np.load(os.path.join(out_dir, f)).astype(float)
         nat = nat / nat.sum(-1, keepdims=True)
+        own = os.path.join(out_dir, f"{fit_name}__{target}__{h}__district.npy")
         for variant, rule in FITS[fit_name][2].items():
-            if rule not in ("blend", "blend_noise"):
+            if rule not in ("blend", "blend_noise") and not (rule == "model" and os.path.exists(own)):
                 continue
             tag = f"{variant}__{target}__{h}"
             path = os.path.join(out_dir, tag + ".json")
@@ -571,7 +578,11 @@ def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
                 continue
             with open(path) as fh:
                 saved = json.load(fh)
-            dist = districts_from_national(nat, target, noise=(rule == "blend_noise"), seed=seed)
+            if rule == "model":
+                dist = np.load(own).astype(float)
+                dist = dist / dist.sum(-1, keepdims=True)
+            else:
+                dist = districts_from_national(nat, target, noise=(rule == "blend_noise"), seed=seed)
             summary, party = score(nat, dist, target, seats_map)
             saved["summary"].update(summary)
             party.insert(0, "model", variant)
