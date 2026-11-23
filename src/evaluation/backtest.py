@@ -373,7 +373,13 @@ FITS = {
         {"mask_unreported_parties": True, "mask_absent_parties": True, "poll_bias_per_cycle": True},
         {"gp_bias_cycle": "model", "gp_bias_cycle_blend": "blend_noise"},
     ),
-    # per-cycle deviation only, nothing carried over: no party-specific correction (owner's preference)
+    # no industry bias at all (house effects only), like rw_nobias
+    "gp_nobias": (
+        "gp_current",
+        {"mask_unreported_parties": True, "mask_absent_parties": True, "use_poll_bias": False},
+        {"gp_nobias": "model", "gp_nobias_blend": "blend_noise"},
+    ),
+    # per-cycle deviation only, nothing carried over: no party-specific correction
     "gp_bias_cycle0": (
         "gp_current",
         {"mask_unreported_parties": True, "mask_absent_parties": True, "poll_bias_per_cycle": True, "poll_bias_mean_sd": 0.0},
