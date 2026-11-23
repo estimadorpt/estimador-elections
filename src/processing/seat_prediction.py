@@ -256,38 +256,36 @@ def simulate_seat_allocation(
     # --- End Pre-load Data ---
 
     if pre_load_successful:
-        # --- Calculate ACTUAL 2024 Seats --- 
-        seats2024 = defaultdict(lambda: defaultdict(int))
+        # --- Seats at the previous election (the baseline the deltas are measured against) ---
+        # Read from the same election that sets the district vote totals, so the deltas follow
+        # the data instead of a hard-coded year (they were against 2024 until 2025's results
+        # were loaded).
+        previous_election = last_election_date_for_baseline_votes
+        seats_previous = defaultdict(lambda: defaultdict(int))
         try:
-            print("Calculating actual seat allocation for 2024 election...")
-            results_2024_districts = dataset.results_mult_district[
-                dataset.results_mult_district['election_date'] == pd.to_datetime('2024-03-10')
+            print(f"Calculating seat allocation at the previous election ({previous_election})...")
+            results_prev_districts = dataset.results_mult_district[
+                pd.to_datetime(dataset.results_mult_district['election_date']) == pd.to_datetime(previous_election)
             ]
-            if results_2024_districts.empty:
-                 print("Warning: 2024 district results not found in dataset. Cannot calculate delta2024.")
+            if results_prev_districts.empty:
+                print(f"Warning: no district results for {previous_election}; seat deltas will be against zero.")
             else:
                 for circulo_name, num_seats in district_config.items():
-                    district_votes_2024 = results_2024_districts[results_2024_districts['Circulo'] == circulo_name]
-                    if district_votes_2024.empty:
-                        # print(f"Debug: No 2024 results found for district '{circulo_name}'. Assigning 0 seats.")
-                        seats2024[circulo_name] = {party: 0 for party in political_families}
+                    district_votes_prev = results_prev_districts[results_prev_districts['Circulo'] == circulo_name]
+                    if district_votes_prev.empty:
+                        seats_previous[circulo_name] = {party: 0 for party in political_families}
                         continue
-                    # Ensure we only take the first row if multiple matches (shouldn't happen with date filter)
-                    district_votes_2024 = district_votes_2024.iloc[0]
-                    votes_dict_2024 = {}
-                    for party in political_families:
-                        if party in district_votes_2024.index:
-                             votes_dict_2024[party] = int(district_votes_2024[party])
-                        else:
-                             votes_dict_2024[party] = 0
-                    # Calculate seats for 2024
-                    actual_seats_2024 = calculate_dhondt(votes_dict_2024, num_seats)
-                    seats2024[circulo_name] = actual_seats_2024
-                print("Actual 2024 seat calculation complete.")
+                    district_votes_prev = district_votes_prev.iloc[0]
+                    votes_dict_prev = {
+                        party: int(district_votes_prev[party]) if party in district_votes_prev.index else 0
+                        for party in political_families
+                    }
+                    seats_previous[circulo_name] = calculate_dhondt(votes_dict_prev, num_seats)
+                print("Previous-election seat calculation complete.")
         except Exception as e:
-            print(f"Error calculating 2024 seats: {e}")
+            print(f"Error calculating previous-election seats: {e}")
             if debug: traceback.print_exc()
-        # --- End 2024 Seat Calculation --- 
+        # --- End previous-election seats ---
 
         # --- Initialization for NEW contested summary logic --- 
         # Stores list of seat dicts per district: {district: [ {party:seats}, {party:seats}, ... ]}
@@ -373,6 +371,7 @@ def simulate_seat_allocation(
             # --- AUGMENT WITH DIASPORA SCENARIOS ---
             print("\nAugmenting national seat samples with diaspora scenarios...")
             diaspora_scenarios_config = [
+                {'name': 'S_2025', 'seats_delta': {'CH': 2, 'AD': 2}},  # Europa AD 1, CH 1; Fora da Europa AD 1, CH 1
                 {'name': 'S_2024', 'seats_delta': {'CH': 2, 'PS': 1, 'AD': 1}},
                 {'name': 'S_2022', 'seats_delta': {'PS': 3, 'AD': 1}},
                 {'name': 'S_2019', 'seats_delta': {'PS': 2, 'AD': 2}},
@@ -486,7 +485,7 @@ def simulate_seat_allocation(
 
                  district_ENSC = 0.0 # ENSC still calculated based on individual party mode distribution
                  district_parties_output = {} # Individual party mode distributions
-                 district_delta2024_scenario = {} # Delta vs modal scenario
+                 district_delta_scenario = {} # modal scenario minus the previous election's seats
                  
                  for party in political_families:
                      if party not in district_df.columns: continue # Should not happen now, but safe check
@@ -494,9 +493,8 @@ def simulate_seat_allocation(
                      
                      # --- Calculate Delta vs Modal Scenario --- 
                      seats_in_modal_scenario = modal_scenario_dict.get(party, 0)
-                     seats_actual_2024 = seats2024.get(circulo_name, {}).get(party, 0)
-                     delta_vs_2024 = seats_in_modal_scenario - seats_actual_2024
-                     district_delta2024_scenario[party] = delta_vs_2024
+                     seats_at_previous = seats_previous.get(circulo_name, {}).get(party, 0)
+                     district_delta_scenario[party] = seats_in_modal_scenario - seats_at_previous
                      # --- End Delta vs Modal Scenario --- 
                      
                      # --- Keep calculation relative to INDIVIDUAL party mode for ENSC & P(delta) --- 
@@ -519,7 +517,10 @@ def simulate_seat_allocation(
                  # Store district results
                  contested_summary_output["districts"][circulo_name] = {
                      "ENSC": round(district_ENSC, 4),
-                     "delta2024": district_delta2024_scenario, # Use the scenario-based delta here
+                     # seats in the modal scenario minus seats at the previous election
+                     # (the 2025 archive on the site reads the older key "delta2024" from its frozen file)
+                     "delta_previous": district_delta_scenario,
+                     "previous_election": previous_election,
                      "parties": district_parties_output # Keep the individual party distributions
                  }
              aggregation_duration = time.time() - aggregation_start_time
