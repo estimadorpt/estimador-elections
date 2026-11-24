@@ -157,6 +157,7 @@ def run(
     seed: int = 20261123,
     seat_samples: int = 2000,
     full_trace: bool = False,
+    kalman: bool = False,
 ) -> dict:
     import xarray as xr
 
@@ -180,10 +181,16 @@ def run(
 
     cfg = RWConfig(**BIAS_FORMS[bias])
     data = prepare_rw_data(polls, ds.results_national, target_ts, ds.historical_election_dates, PARTIES, cfg)
-    idata = _sample(build_rw_model(data, cfg), draws, tune, chains, seed)
+    if kalman:  # the weekly path integrated out (src/models/poll_rw_kalman.py): no eta or z_rw
+        from src.models.poll_rw_kalman import fit_rw_kalman
+
+        idata, nat_model, _ = fit_rw_kalman(data, cfg, draws, tune, chains, seed)
+    else:
+        idata = _sample(build_rw_model(data, cfg), draws, tune, chains, seed)
+        nat_model = national_share_draws(idata, data)
     diag, diag_table = full_diagnostics(idata, data.exists)
     diag_table.to_csv(os.path.join(out, "diagnostics.csv"), index_label="value")
-    if full_trace:
+    if full_trace or kalman:
         idata.to_zarr(os.path.join(out, "trace.zarr"))
     else:
         import arviz as az
@@ -193,7 +200,7 @@ def run(
         )
 
     rng = np.random.default_rng(seed)
-    nat = add_polling_error(national_share_draws(idata, data), tau, rng)  # (chains*draws, P)
+    nat = add_polling_error(nat_model, tau, rng)  # (chains*draws, P)
     np.save(os.path.join(out, "national_draws.npy"), nat)
     q = np.quantile(nat, [0.05, 0.25, 0.5, 0.75, 0.95], axis=0) * 100
     summary = pd.DataFrame(
@@ -219,7 +226,7 @@ def run(
     )
 
     info = {
-        "model": "random walk (src/models/poll_rw_model.py)",
+        "model": "random walk, Kalman filter (src/models/poll_rw_kalman.py)" if kalman else "random walk (src/models/poll_rw_model.py)",
         "bias_form": bias,
         "as_of": str(as_of_ts.date()),
         "last_poll": str(last_poll.date()),
@@ -237,7 +244,7 @@ def run(
         "cfg": asdict(cfg),
         "diagnostics": diag,
         "gate": GATE,
-        "trace": "full" if full_trace else "light: no weekly innovations; latent path for the last 52 weeks, every 4th before and election dates",
+        "trace": "full" if (full_trace or kalman) else "light: no weekly innovations; latent path for the last 52 weeks, every 4th before and election dates",
     }
     with open(os.path.join(out, "run.json"), "w") as f:
         json.dump(info, f, indent=2, default=str)
@@ -261,8 +268,9 @@ def main(argv=None) -> None:
     ap.add_argument("--chains", type=int, default=4)
     ap.add_argument("--seed", type=int, default=20261123)
     ap.add_argument("--full-trace", action="store_true", help="save every variable in trace.zarr (about 1 GB at 4 x 2000)")
+    ap.add_argument("--kalman", action="store_true", help="integrate the weekly path out with a Kalman filter (Gaussian polls)")
     a = ap.parse_args(argv)
-    run(a.out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed, full_trace=a.full_trace)
+    run(a.out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed, full_trace=a.full_trace, kalman=a.kalman)
 
 
 if __name__ == "__main__":

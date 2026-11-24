@@ -247,6 +247,30 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     return {"national": nat, "district": None, "diag": diag, "extra": extra}
 
 
+def run_rw_kf(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] = None) -> Dict:
+    """The rw model with the weekly path integrated out by a Kalman filter (src.models.poll_rw_kalman)."""
+    from src.models.poll_rw_kalman import fit_rw_kalman
+    from src.models.poll_rw_model import RWConfig, prepare_rw_data
+
+    cfg = RWConfig(**(cfg_overrides or {}))
+    data = prepare_rw_data(
+        ds.polls_train, ds.results_national, target, ds.historical_election_dates, PARTIES, cfg
+    )
+    idata, nat, ev = fit_rw_kalman(data, cfg, draws, tune, chains, seed)
+    post = idata.posterior
+    diag_vars = [v for v in ("sigma_rw", "sigma_house", "house", "concentration_polls", "sigma_bias", "bias_mean", "bias") if v in post]
+    diag = _diagnostics(idata, var_names=diag_vars)
+    extra = {
+        "sigma_rw": dict(zip(PARTIES, np.round(post["sigma_rw"].mean(("chain", "draw")).values, 4))),
+        "concentration_polls": float(post["concentration_polls"].mean()),
+        "polls_without_reference_party": int(ev["n_skipped"]),
+        "cfg": asdict(cfg),
+    }
+    if "bias_mean" in post:
+        extra["bias_mean"] = dict(zip(PARTIES, np.round(post["bias_mean"].mean(("chain", "draw")).values, 3)))
+    return {"national": nat, "district": None, "diag": diag, "extra": extra}
+
+
 def run_poll_average(ds, target, window_days=21, min_polls=4) -> Dict:
     """Mean of the polls in the last `window_days` before the cutoff (at least `min_polls`)."""
     polls = ds.polls_train.sort_values("date")
@@ -483,6 +507,13 @@ FITS = {
     # M2, no industry bias but a momentum bias: polls misread a party by how far it has moved
     # since the last election (the same coefficient for every party)
     "rw_nobias_momentum": ("rw", {"bias_sd_prior": 1e-3, "momentum_bias_sd": 0.2}, {"rw_nobias_momentum": "blend_noise"}),
+    # the same models with the weekly path integrated out by a Kalman filter (Gaussian polls)
+    "rw_kf_nobias": ("rw_kf", {"bias_sd_prior": 1e-3}, {"rw_kf_nobias": "blend_noise"}),
+    "rw_kf_static": (
+        "rw_kf",
+        {"persistent_bias": True, "persistent_bias_sd": 0.3, "bias_sd_prior": 1e-3},
+        {"rw_kf_static": "blend_noise"},
+    ),
     # M3, rw_nobias plus a late swing learned from the other elections, is not a fit: it is
     # derived from rw_nobias's saved draws by `derive_late_swing` (--late-swing).
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
@@ -504,6 +535,8 @@ def run_one(fit_name: str, target: str, horizon: int, draws: int, tune: int, cha
         res = run_gp_current(ds, target, draws, tune, chains, seed, **kwargs)
     elif runner == "rw":
         res = run_rw(ds, target, draws, tune, chains, seed, kwargs)
+    elif runner == "rw_kf":
+        res = run_rw_kf(ds, target, draws, tune, chains, seed, kwargs)
     elif runner == "poll_average":
         res = run_poll_average(ds, target)
     elif runner == "last_result":
