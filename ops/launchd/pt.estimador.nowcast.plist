@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for the live legislative nowcast on estimador.pt (scripts/nowcast_daily.sh,
+  docs/live_nowcast.md). Every hour it checks the poll feed; when the feed holds polls the
+  published estimate has not read, it refits (about 50 minutes), checks the gate, exports and
+  pushes the page's data to estimador-web's main.
+
+  This file is not installed by anything. Install (paths are for Bernardo's Mac Studio):
+    git -C ~/code/estimador-web worktree add --detach ~/code/estimador-web-nowcast-publish origin/main
+    cp ~/code/estimador-elections-live/ops/launchd/pt.estimador.nowcast.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/pt.estimador.nowcast.plist
+  Run now: launchctl kickstart gui/$(id -u)/pt.estimador.nowcast
+  Stop:    launchctl bootout gui/$(id -u)/pt.estimador.nowcast
+
+  launchd never starts a second copy while one runs, so a 50-minute fit simply skips the
+  hourly ticks it overlaps; a tick missed while the Mac sleeps runs on wake.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>pt.estimador.nowcast</string>
+  <key>WorkingDirectory</key><string>/Users/bernardocaldas/code/estimador-elections-live</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/bernardocaldas/code/estimador-elections-live/scripts/nowcast_daily.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/Users/bernardocaldas/.pixi/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/Users/bernardocaldas</string>
+  </dict>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/bernardocaldas/Library/Logs/estimador-nowcast.log</string>
+  <key>StandardErrorPath</key><string>/Users/bernardocaldas/Library/Logs/estimador-nowcast.err.log</string>
+</dict>
+</plist>

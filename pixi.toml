@@ -43,6 +43,10 @@ notebook = "jupyter lab"
 # Extra flags go after the task: --as-of YYYY-MM-DD, --bias static (a labelled scenario only).
 nowcast = "python -m src.forecast_rw --draws 2000 --tune 2000"
 forecast = "python -m src.forecast_rw --draws 2000 --tune 2000 --target"
+# The live page (estimador.pt/pt/eleicoes/proximas-legislativas): export a nowcast run to an
+# estimador-web checkout (`pixi run export-web <run> --web <checkout>`). The hourly job
+# scripts/nowcast_daily.sh refits, exports and pushes; docs/live_nowcast.md.
+export-web = "python -m src.export_nowcast_web"
 
 # The earlier GP model (src.main), kept for comparison. No election is scheduled, so it trains on
 # the placeholder date 2029-10-07 (every current poll sits outside its 90-day campaign window).
