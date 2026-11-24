@@ -66,8 +66,11 @@ class RWConfig:
     short_timescale_logsd: float = 0.5
     short_sd_prior: float = 0.08  # HalfNormal scale of the short term's stationary sd (log-ratio)
     # Fix the timescale (weeks) instead of learning it. Learned, it sank to about one grid step in
-    # the pilot (2025, h56) and the chains did not mix (OU rhat 1.09, Matern rhat 1.24), so the
-    # backtest compares fixed timescales: 4 weeks primary, 2 and 8 as sensitivity.
+    # the pilot (2025, h56) and the chains did not mix (OU rhat 1.09, Matern rhat 1.24).
+    # Result (Nov 2026, scripts/dynamics, 5 elections x h7/28/56, 1000/1000): a fixed 4-week OU term
+    # with a shared scale met the pre-stated rule, but its gain (-0.007 CRPS) equals the RW's own
+    # chain-to-chain noise and vanishes at the same calibrated polling error; its scale mixes slowly
+    # (median ESS ~300). Production keeps dynamics="rw".
     short_timescale_fixed: Optional[float] = None
     # One short-term scale for all parties instead of one each. Per party, the scale of a fixed
     # 4-week OU term did not mix at 1000/1000 (2025 h7: ESS 352 on sigma_short; most parties'
