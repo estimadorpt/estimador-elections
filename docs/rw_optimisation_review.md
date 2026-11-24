@@ -20,24 +20,40 @@ over ~7 cores (XLA intra-op threads). The latent weekly steps mix very well (ESS
 and the house effects of the biggest pollsters on PS/AD. The common-shift direction of the
 softmax is not a problem (checked 23 Nov).
 
-## 2. Where the cost probably comes from (hypotheses to test first)
+## 2. Where the cost comes from
 
-1. **Stiffness from the election results.** Results enter as a Dirichlet-multinomial with
-   concentration 20,000, so the walk must pass within ~0.01 (log-ratio) of each past result,
-   while everything else lives on scales of 0.03-1. A tight constraint on a *sum* of
-   non-centred steps forces a small step size (0.005), hence deep trees. Probe: refit with
-   `result_concentration` 2,000 and 200 (diagnostic only); if the step size rises roughly with
-   1/sqrt(concentration), this is the bottleneck.
-2. **Non-centred steps under dense data.** In campaign windows the polls pin the path; a centred
-   (or partially centred) parameterisation is usually better conditioned there, the non-centred
-   one between campaigns.
-3. **Long grid.** 800-935 weekly steps from 2009, most of them in quiet mid-cycle periods.
+**Measured (cloud probes, 23 Nov; numpyro NUTS, rw_nobias, h56, 2 chains x 300/300):**
+
+| Probe | Step size | Tree depth |
+|---|---|---|
+| 2025, current model | 0.0052 | 10 (1,023 gradients per draw) |
+| 2025, all results removed | 0.0080 | 9 |
+| 2025, all polls removed | 0.0076 | 9 |
+| 2011, result concentration 2,000 vs 20,000 | 0.0106 vs 0.0092 | 9 vs 9 |
+| 2011, zero-sum start levels over the founding parties only (entrants get their own entry level, Normal(0, 1.7); exact rewrite) | 0.039 | 7 (4x fewer gradients) |
+| 2025, same zero-sum start-level rewrite | no change | — |
+| 2011, plus Haar-wavelet steps on top | small further gain | — |
+| nutpie, diagonal or low-rank adaptation | bigger steps | but r-hat 1.15-1.23 at 300 tuning draws |
+
+Shares matched the current model in every exact rewrite.
+
+**Reading:** the election results and the polls are **two roughly equal sources of stiffness**;
+either one alone still forces depth 9. Both pin *sums of hundreds of non-centred weekly steps*,
+directions a diagonal mass matrix cannot rescale. So my first hypothesis (results alone) is only
+half the story: an anchor-and-bridge rewrite for the results alone should reach depth 9 at
+best (~2x), not 5-10x. A larger gain needs the poll pinning handled as well: a multiscale or
+bridge basis for the whole path, or integrating the path out. The start-level fix is free and
+exact and helps where entrants dominate (2011), not on recent targets.
+
+The long grid (800-935 weekly steps from 2009, mostly quiet mid-cycle weeks) multiplies the cost
+per gradient but is not what sets the step size.
 
 ## 3. Candidate optimisations, in the order I would test them
 
 | # | Change | Expected gain | Changes the model? | Risk |
 |---|---|---|---|---|
-| 1 | **Anchor-and-bridge parameterisation**: sample the walk's value at each election week (pinned by the result) and the path between elections as Brownian bridges in standard-normal units | step size up, tree depth from 10 to ~6-7: **5-10x fewer gradients** if hypothesis 1 holds | no (same joint density, reparameterised) | moderate implementation work |
+| 0 | **Zero-sum start levels over the founding parties only**, entrants with their own entry level (measured in the cloud: exact, 4x on 2011, no change on 2025) | up to 4x on early targets | no | low; already prototyped |
+| 1 | **Multiscale / bridge basis for the whole path** (anchor the walk at elections and at a coarse set of knots, Brownian bridges between them; or Haar-wavelet steps), so neither result nor poll pinning acts on long sums of steps | from depth 10 towards 6-7 only if both pinning sources are handled; results-only anchoring ~2x at best (depth 9) | no (same joint density, reparameterised) | moderate implementation work |
 | 2 | **Dense mass matrix on the hyperparameters** (numpyro `dense_mass` block for `sigma_rw`, `sigma_house`, `concentration_polls`) | better mixing of the slowest values (CDU volatility, house spreads) | no | low |
 | 3 | **float32** instead of float64 under JAX | ~1.5-2x per gradient | no (numerics only) | check the Dirichlet-multinomial `gammaln` terms and the 20,000 concentration |
 | 4 | **Thread layout**: one XLA thread per chain and more fits in parallel in grids | throughput of grids, not single fits | no | none |
@@ -63,6 +79,12 @@ timescales (do not mix; no detectable forecast gain, see `scripts/dynamics`).
 
 ## 5. Order of work once the Mac is free
 
-1. Probe hypothesis 1 (two short diagnostic fits). 2. If confirmed, item 1; otherwise items 2-3.
-3. Items 3-4 regardless (cheap). 4. Item 5 if fits are still > 5 min. 5. Item 7 only if a
-daily nowcast or a much larger backtest needs another order of magnitude.
+The stiffness probe is done (section 2), so:
+1. Item 0 (free, exact) on the benchmark set.
+2. Items 3-4 (float32, thread layout): cheap and independent of the geometry.
+3. Item 2 (dense mass on the hyperparameters) for the slow scales; nutpie's low-rank adaptation
+   is worth one retry with full tuning (the cloud probe used only 300 tuning draws).
+4. Item 1 (multiscale/bridge basis for the whole path), since the polls pin the path as much as
+   the results do.
+5. Item 5 if fits are still > 5 min; item 7 only if a daily nowcast or a much larger backtest
+   needs another order of magnitude.
