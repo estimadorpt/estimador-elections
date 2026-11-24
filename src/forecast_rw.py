@@ -1,17 +1,18 @@
 """Forecast from the random-walk national model, with blend-swing districts and a calibrated
 polling error.
 
-This is the path the November 2026 backtest points to (`src/evaluation/backtest.py`,
-`--calibrate`): at 7, 28 and 56 days before past elections, the random walk with no industry
-bias plus a predict-time polling error passed the calibration gate (90% intervals that cover)
-with the lowest national CRPS, while the production GP needed a wider error and scored worse.
-It does not replace `python -m src.main --mode train/predict`; it gives a second reading of the
-same polls.
+This is the legislative model of record (`pixi run nowcast`, `pixi run forecast <date>`), chosen
+by the November 2026 backtest (`src/evaluation/backtest.py`, `--calibrate`): at 7, 28 and 56 days
+before six past elections, the random walk with no industry bias plus a predict-time polling
+error passed the calibration gate (90% intervals that cover) with the lowest national CRPS, while
+the GP model (`python -m src.main`, kept for comparison) needed a wider error and scored worse.
+Directional bias terms were tested before running and none was adopted
+(`docs/bias_test_2026-11-24.md`).
 
     # if the election were held on the day of the last poll
-    python -m src.forecast_rw --out outputs/WIP_rw_nowcast
+    python -m src.forecast_rw                    # -> outputs/WIP_legislative_nowcast_rw_<as-of>
     # a given election day
-    python -m src.forecast_rw --target 2029-10-07 --out outputs/WIP_rw_2029
+    python -m src.forecast_rw --target 2029-10-07  # -> outputs/WIP_legislative_forecast_rw_<as-of>
 
 Writes to --out: national_summary.csv (median and 50%/90% intervals, in %), national_draws.npy
 (draws x parties, polling error included), the seat files of `simulate_seat_allocation`,
@@ -256,9 +257,21 @@ def run(
     return info
 
 
+def default_out(target: str = "last_poll", as_of: Optional[str] = None, root: str = "outputs") -> str:
+    """WIP_ folder named for what the run is and the date of its polls; never ACCEPTED_ by default."""
+    day = (pd.Timestamp(as_of) if as_of else pd.Timestamp.today()).strftime("%Y%m%d")
+    kind = "nowcast" if target == "last_poll" else f"forecast_{pd.Timestamp(target).strftime('%Y%m%d')}"
+    return os.path.join(root, f"WIP_legislative_{kind}_rw_{day}")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", required=True, help="output directory (name it WIP_... until diagnostics pass)")
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="output directory (default outputs/WIP_legislative_{nowcast|forecast}_rw_<as-of>; "
+        "rename to ACCEPTED_ only once run.json's gate passes)",
+    )
     ap.add_argument("--target", default="last_poll", help="'last_poll' (default) or an election date YYYY-MM-DD")
     ap.add_argument("--as-of", default=None, help="use polls published up to this date (default: today)")
     ap.add_argument("--bias", choices=sorted(BIAS_FORMS), default="none", help="industry bias form (default: none)")
@@ -270,7 +283,8 @@ def main(argv=None) -> None:
     ap.add_argument("--full-trace", action="store_true", help="save every variable in trace.zarr (about 1 GB at 4 x 2000)")
     ap.add_argument("--kalman", action="store_true", help="integrate the weekly path out with a Kalman filter (Gaussian polls)")
     a = ap.parse_args(argv)
-    run(a.out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed, full_trace=a.full_trace, kalman=a.kalman)
+    out = a.out or default_out(a.target, a.as_of)
+    run(out, a.target, a.as_of, a.bias, a.polling_error_sd, a.draws, a.tune, a.chains, a.seed, full_trace=a.full_trace, kalman=a.kalman)
 
 
 if __name__ == "__main__":

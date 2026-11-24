@@ -1,5 +1,7 @@
 """The random-walk forecast path's polling-error schedule."""
 
+import os
+
 import pytest
 
 from src.forecast_rw import RW_NOBIAS_TAU, tau_for_horizon
@@ -65,3 +67,12 @@ def test_light_posterior_keeps_recent_weeks_and_drops_innovations():
     assert "z_rw" not in light and "s" in light
     assert set(range(T - 52, T)) <= set(kept) and 10 in kept and len(kept) < T
     assert not np.isnan(light["eta"].values).any() and light["eta"].dtype == np.float32
+
+
+def test_default_out_names_a_wip_folder_by_kind_and_date():
+    from src.forecast_rw import default_out
+
+    assert default_out("last_poll", "2026-11-24") == os.path.join("outputs", "WIP_legislative_nowcast_rw_20261124")
+    assert default_out("2029-10-07", "2026-11-24") == os.path.join(
+        "outputs", "WIP_legislative_forecast_20291007_rw_20261124"
+    )

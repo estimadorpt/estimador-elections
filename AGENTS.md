@@ -97,11 +97,16 @@ pytest tests/test_dataset.py  # Run specific test file
 
 ### Next legislative election (nowcast)
 
-2025-05-18 is the last historical election. No election is scheduled, so `pixi run train` uses the
-placeholder date 2029-10-07 (the regular election falls in autumn 2029; any date more than 90 days
-after the last poll keeps the campaign GP out of the fit). Read the "if the election were today"
-estimate with `pixi run nowcast` (`--prediction-date-mode last_poll`). Once an election is called,
-train with its real date.
+2025-05-18 is the last historical election. The legislative model of record is the random walk
+(`src/forecast_rw.py`, chosen by the November 2026 six-election backtest; `docs/bias_test_2026-11-24.md`
+for the bias forms that were tested and not adopted). Read the "if the election were today" estimate
+with `pixi run nowcast`; once an election is called, `pixi run forecast <YYYY-MM-DD>`. Both use
+4 x 2000+2000 draws (about 50 minutes on the Mac), write `outputs/WIP_legislative_..._rw_<date>`, and
+check the gate on every value in `run.json`: rename the folder `ACCEPTED_` only when it passes. Set
+`ESTIMADOR_WIKIPEDIA_POLLS` to the poll feed's CSV, and pass `--as-of` to freeze the input date.
+
+The earlier GP model stays for comparison: `pixi run train` (placeholder date 2029-10-07, far
+enough out to keep its 90-day campaign GP out of the fit), `pixi run predict` and `pixi run nowcast-gp`.
 
 ### Running the Election Model
 
