@@ -174,6 +174,14 @@ def fit_rw_kalman(data: RWData, cfg: RWConfig, draws: int, tune: int, chains: in
     if cfg.momentum_bias_sd > 0 or cfg.house_drift_sd_prior > 0 or cfg.pollster_concentration or cfg.bloc_swing_sd_prior > 0:
         raise NotImplementedError("rw_kf implements the random walk, house effects and industry bias only")
     import arviz as az
+
+    # One CPU device per chain, as pymc.sampling.jax sets up for the exact fits (it asks XLA for
+    # 100). Without it JAX sees one device and the four chains run vectorized on one core, which
+    # is how the 24 Nov Mac grid ran them: 2011 at 56 days took 170 s that way against 65 s in
+    # parallel (218 s sequential). It has no effect once JAX has started.
+    import numpyro
+
+    numpyro.set_host_device_count(max(chains, 1))
     import jax
 
     jax.config.update("jax_enable_x64", True)
