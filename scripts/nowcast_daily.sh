@@ -34,6 +34,8 @@ OUTPUTS=$ELECTIONS/outputs
 LOG=$OUTPUTS/nowcast_daily.log
 STATE=$OUTPUTS/nowcast_daily.state      # "<poll hash> <run folder>" of the last published run
 STALE_MARK=$OUTPUTS/nowcast_daily.stale_alerted
+ATTEMPT=$OUTPUTS/nowcast_daily.attempt  # "<poll hash> <failed|accepted> <run folder>" of the last fit
+ALERTED=$OUTPUTS/nowcast_daily.alerted  # the last failure alert, so a repeat within 6 h stays quiet
 LOCK=$OUTPUTS/.nowcast_daily.lock
 
 PUSH=1
@@ -54,7 +56,14 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 log() { echo "$(ts) $*" >> "$LOG"; }
 # ntfy topics are public to anyone who knows the name: no home-folder paths in the text.
 ntfy() { [ -n "$NTFY_TOPIC" ] || return 0; curl -s -m 20 -H "Title: $1" -d "${2//$HOME/~}" "https://ntfy.sh/$NTFY_TOPIC" > /dev/null 2>&1 || true; }
-fail() { log "STOPPED: $1"; ntfy "estimador nowcast: not published" "$1"; exit 1; }
+fail() {
+  log "STOPPED: $1"
+  if [ "$(cat "$ALERTED" 2>/dev/null)" != "$1" ] || [ -z "$(find "$ALERTED" -mmin -360 2>/dev/null)" ]; then
+    ntfy "estimador nowcast: not published" "$1"
+    printf '%s' "$1" > "$ALERTED"
+  fi
+  exit 1
+}
 
 if ! mkdir "$LOCK" 2>/dev/null; then
   # launchd never starts a second copy, but a hand run might overlap the scheduled one.
@@ -130,10 +139,30 @@ last_digest=""; last_run=""
 [ -f "$STATE" ] && read -r last_digest last_run < "$STATE"
 if [ -n "$last_run" ] && [ -f "$OUTPUTS/$last_run/input_polls.csv" ]; then
   read -r _ last_n <<< "$(poll_digest "$OUTPUTS/$last_run/input_polls.csv")"
-  [ "$npolls" -lt "$last_n" ] && fail "the feed lists $npolls polls since $PREVIOUS_ELECTION, fewer than the $last_n the published run read"
+  # A hand entry that Wikipedia later lists can merge into one row; a bigger drop is a broken feed.
+  if [ "$npolls" -lt "$((last_n - 3))" ]; then
+    fail "the feed lists $npolls polls since $PREVIOUS_ELECTION, far fewer than the $last_n the published run read"
+  elif [ "$npolls" -lt "$last_n" ]; then
+    log "the feed lists $npolls polls, $last_n before (a merged entry?); going on"
+  fi
 fi
 if [ "$digest" = "$last_digest" ] && [ "$FORCE" = 0 ]; then
   log "no new polls ($npolls since $PREVIOUS_ELECTION, digest $digest)"
+  exit 0
+fi
+# The same polls were fitted already: a failed fit fails the same way again (the seed is fixed),
+# so it waits for new polls or --force; an accepted run that did not get online is published again.
+attempt_digest=""; attempt_status=""; attempt_run=""
+[ -f "$ATTEMPT" ] && read -r attempt_digest attempt_status attempt_run < "$ATTEMPT"
+if [ "$digest" = "$attempt_digest" ] && [ "$FORCE" = 0 ]; then
+  if [ "$attempt_status" = "accepted" ] && [ -d "$OUTPUTS/$attempt_run" ]; then
+    log "publishing $attempt_run again (accepted, not yet online)"
+    publish "$OUTPUTS/$attempt_run"
+    [ "$PUSH" = 1 ] && echo "$digest $attempt_run" > "$STATE"
+    log "ALL DONE"
+    exit 0
+  fi
+  log "these polls failed in $attempt_run already; waiting for new polls (or --force)"
   exit 0
 fi
 
@@ -150,14 +179,15 @@ ESTIMADOR_WIKIPEDIA_POLLS="$PWD/$out/input_polls.csv" /usr/bin/caffeinate -is \
   "$PIXI" run python -m src.forecast_rw --out "$out" --as-of "$today" --draws 2000 --tune 2000 --chains 4 > "$out/fit.log" 2>&1
 rc=$?
 log "FIT_DONE rc=$rc in $(( $(date +%s) - start )) s"
-[ $rc -eq 0 ] || fail "the fit exited $rc (see $ELECTIONS/$out/fit.log)"
+if [ $rc -ne 0 ]; then echo "$digest failed $(basename "$out")" > "$ATTEMPT"; fail "the fit exited $rc (see $ELECTIONS/$out/fit.log)"; fi
 gate=$(/usr/bin/python3 -I -c "import json,sys;print(json.load(open(sys.argv[1]))['diagnostics'].get('passes_gate'))" "$out/run.json" 2>/dev/null)
-[ "$gate" = "True" ] || fail "the fit in $out did not pass the convergence gate (passes_gate=$gate)"
+if [ "$gate" != "True" ]; then echo "$digest failed $(basename "$out")" > "$ATTEMPT"; fail "the fit in $out did not pass the convergence gate (passes_gate=$gate)"; fi
 
 # 3. Accepted: the gate is the acceptance rule (CLAUDE.md, "When to mark as ACCEPTED").
 accepted="outputs/ACCEPTED_legislative_nowcast_rw_v1_nobias_$(date +%Y%m%d)"
 [ -e "$accepted" ] && accepted="${accepted}_$(date +%H%M)"
 mv "$out" "$accepted" || fail "could not rename $out"
+echo "$digest accepted $(basename "$accepted")" > "$ATTEMPT"
 log "ACCEPTED $accepted"
 
 # 4. Publish, then remember what was published.

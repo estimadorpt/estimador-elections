@@ -50,6 +50,10 @@ REQUIRED = (
 )
 # Poll columns in the feed (estimador-data data/polls/feed/legislative_polls.csv) the page lists.
 POLL_PARTY_COLUMNS = ("AD", "PS", "CH", "IL", "L", "CDU", "BE", "PAN", "JPP", "Others")
+MODELLED = ("PS", "CH", "IL", "BE", "CDU", "PAN", "L", "AD")
+# The listed polls may differ from the model's own count by a poll the Marktest history already
+# held (combine_poll_sources); more than this means the list is not what the model read.
+MAX_POLL_COUNT_GAP = 3
 
 
 class ExportRefused(RuntimeError):
@@ -199,25 +203,36 @@ def _num(value: str) -> Optional[float]:
 
 
 def polls_since(run_dir: str, previous: str) -> list[dict]:
-    """The polls since the last election, as published (shares of each poll's own total)."""
-    rows = []
+    """The polls since the last election the loader keeps (load_wikipedia_polls' rules: a sample
+    size, a fieldwork end and modelled shares adding to 50 or more; one row per pollster and
+    fieldwork end, Wikipedia's first), as published (shares of each poll's own total)."""
     with open(os.path.join(run_dir, "input_polls.csv"), encoding="utf-8") as f:
-        for r in csv.DictReader(f):
-            end = r.get("fieldwork_end") or ""
-            if end <= previous:
-                continue
-            shares = {p: round(v / 100, 4) for p in POLL_PARTY_COLUMNS if (v := _num(r.get(p, ""))) is not None}
-            n = _num(r.get("sample_size", ""))
-            rows.append(
-                {
-                    "pollster": r.get("pollster", ""),
-                    "fieldwork_start": r.get("fieldwork_start") or None,
-                    "fieldwork_end": end,
-                    "sample_size": int(n) if n else None,
-                    "shares": shares,
-                    "source_url": r.get("source_url") or None,
-                }
-            )
+        raw = list(csv.DictReader(f))
+    raw.sort(key=lambda r: (r.get("source") or "wikipedia") != "wikipedia")  # stable: Wikipedia's rows first
+    seen, rows = set(), []
+    for r in raw:
+        end = (r.get("fieldwork_end") or "").strip()
+        n = _num(r.get("sample_size", ""))
+        modelled = sum(v for p in MODELLED if (v := _num(r.get(p, ""))) is not None)
+        if not end or not n or modelled < 50:
+            continue
+        key = ((r.get("pollster") or "").strip(), end)
+        if key in seen:
+            continue
+        seen.add(key)
+        if end <= previous:
+            continue
+        shares = {p: round(v / 100, 4) for p in POLL_PARTY_COLUMNS if (v := _num(r.get(p, ""))) is not None}
+        rows.append(
+            {
+                "pollster": key[0],
+                "fieldwork_start": r.get("fieldwork_start") or None,
+                "fieldwork_end": end,
+                "sample_size": int(n),
+                "shares": shares,
+                "source_url": r.get("source_url") or None,
+            }
+        )
     rows.sort(key=lambda r: (r["fieldwork_end"], r["pollster"]), reverse=True)
     return rows
 
@@ -247,10 +262,11 @@ def build(run_dir: str, code_dir: str = ".", fit_code: Optional[str] = None) -> 
     seats = seat_draws(run_dir, parties)
     national = national_rows(run_dir, parties)
     polls = polls_since(run_dir, previous)
-    if len(polls) != int(run.get("n_polls_since_last_election", -1)):
-        raise ExportRefused(
-            f"input_polls.csv has {len(polls)} polls since {previous}, run.json says {run.get('n_polls_since_last_election')}"
-        )
+    model_count = int(run.get("n_polls_since_last_election", -1))
+    if not polls or abs(len(polls) - model_count) > MAX_POLL_COUNT_GAP:
+        raise ExportRefused(f"input_polls.csv lists {len(polls)} polls since {previous}, the model read {model_count}")
+    if len(polls) != model_count:
+        print(f"note: {len(polls)} polls listed, the model read {model_count} (a poll the Marktest history holds)", file=sys.stderr)
     diag = run["diagnostics"]
     nowcast = {
         "schema": SCHEMA,
@@ -269,7 +285,7 @@ def build(run_dir: str, code_dir: str = ".", fit_code: Optional[str] = None) -> 
             "chains": run.get("chains"),
             "draws": run.get("draws"),
             "seat_draws": len(seats),
-            "polls_since_previous": len(polls),
+            "polls_since_previous": model_count,
             "diagnostics": {
                 k: diag.get(k) for k in ("divergences", "max_rhat", "min_ess_bulk", "min_ess_tail", "n_values", "passes_gate")
             },

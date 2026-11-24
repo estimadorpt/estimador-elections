@@ -17,8 +17,11 @@ Each run:
    hourly by `pt.estimador.poll-feed` (estimador-data). It hashes the polls since the 18 May 2025
    election (pollster, fieldwork, sample, shares; not the notes or entry times). The same hash as
    the last published run means nothing new: the run exits.
-2. Stops with an alert if the feed lists fewer polls than the published run read, and alerts once
-   a day if the feed file is more than 26 hours old.
+2. Stops with an alert if the feed lists more than three polls fewer than the published run read
+   (one to three fewer is logged: a hand entry Wikipedia later lists merges into one row), and
+   alerts once a day if the feed file is more than 26 hours old. Polls that were fitted already
+   are not fitted again: a failed fit waits for new polls (or `--force`), and an accepted run that
+   did not get online is published again.
 3. Copies the feed into a new `outputs/WIP_legislative_nowcast_rw_<date>_<time>/input_polls.csv`,
    records the commit in `fit_commit.txt`, and runs `python -m src.forecast_rw --as-of <today>
    --draws 2000 --tune 2000 --chains 4` on that copy (about 50 minutes).
@@ -31,7 +34,12 @@ Each run:
    files and pushes to `main` (fetch, rebase and retry up to four times: the football job pushes
    to the same branch). Azure deploys on push.
 6. Sends an ntfy alert (topic `bc-estimador`) with the new medians, or with the reason nothing
-   was published. On any failure the last good estimate stays online.
+   was published (the same failure is not repeated within 6 hours). On any failure the last good
+   estimate stays online.
+
+The page lists the feed's rows the loader keeps (a sample size, a fieldwork end, one row per
+pollster and fieldwork end, Wikipedia's first); the model's own count can differ by a poll the
+Marktest history already holds, and the export refuses a gap of more than three.
 
 Runs older than 30 days keep everything but `trace.zarr` (about 75 MB each); a run stays
 reproducible from `input_polls.csv`, `fit_commit.txt` and the seed in `run.json`.
@@ -42,6 +50,7 @@ reproducible from `input_polls.csv`, `fit_commit.txt` and the seed in `run.json`
 |---|---|
 | `outputs/nowcast_daily.log` | one line per step, every run |
 | `outputs/nowcast_daily.state` | the poll hash and folder of the last published run |
+| `outputs/nowcast_daily.attempt` | the poll hash, outcome (`failed` or `accepted`) and folder of the last fit |
 | `~/Library/Logs/estimador-nowcast{,.err}.log` | launchd's stdout and stderr |
 | estimador-web `public/data/elections/legislative-nowcast/` | `nowcast.json`, `district_forecast.json`, `contested_summary.json` |
 | estimador-web `data/build-only/elections/legislative-nowcast/` | `seat_forecast_simulations.json` (read at build only) |

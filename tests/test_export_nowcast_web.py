@@ -75,6 +75,18 @@ def test_national_rows_are_fractions_largest_first(tmp_path):
         national_rows(str(tmp_path), PARTIES)
 
 
+def test_polls_since_keeps_what_the_loader_keeps(tmp_path):
+    # A hand entry Wikipedia now lists too, and a row still missing its sample size.
+    (tmp_path / "input_polls.csv").write_text(
+        "pollster,fieldwork_start,fieldwork_end,sample_size,AD,PS,CH,IL,L,CDU,BE,PAN,JPP,Others,source_url,source\n"
+        "Aximage,2026-11-01,2026-11-05,,25,30,26,6,4,3,2,1,,3,,wikipedia\n"
+        "Intercampus,2026-11-11,2026-11-18,600,23,28,24,9,4,4,2,3,,3,,hand\n"
+        "Intercampus,2026-11-11,2026-11-18,609,22.9,28.2,23.8,8.9,4.1,3.6,2.0,2.6,,3.9,,wikipedia\n"
+    )
+    polls = polls_since(str(tmp_path), "2025-05-18")
+    assert [(p["pollster"], p["sample_size"]) for p in polls] == [("Intercampus", 609)]
+
+
 def test_polls_since_keeps_only_polls_after_the_election_as_published(tmp_path):
     (tmp_path / "input_polls.csv").write_text(
         "pollster,fieldwork_start,fieldwork_end,sample_size,AD,PS,CH,JPP,Others,source_url\n"
