@@ -39,3 +39,34 @@ def test_find_closest_election_date():
             # All future polls should be assigned to the target election date
             assert pd.to_datetime(future_election) in future_polls["election_date"].unique(), \
                 "Future polls are not correctly assigned to the target election date" 
+
+def test_2025_is_a_past_election_and_new_polls_join_the_next_cycle():
+    """2025 is history; polls since then come from Wikipedia and point at the next election."""
+    target = "2029-10-07"
+    dataset = ElectionDataset(
+        election_date=target,
+        baseline_timescales=[365],
+        election_timescales=[60],
+    )
+    assert dataset.historical_election_dates[0] == "2025-05-18"
+    assert dataset.government_parties["2025-05-18"] == ["AD"]
+
+    polls = dataset.polls
+    # No exit polls: nothing dated on an election day
+    election_days = pd.to_datetime(dataset.historical_election_dates)
+    assert not polls["date"].isin(election_days).any()
+    assert polls["sample_size"].max() < 5000
+
+    after = polls[polls["date"] > pd.to_datetime("2025-05-18")]
+    assert (after["election_date"] == pd.to_datetime(target)).all()
+    # Marktest stops in September 2025; Wikipedia carries the rest
+    assert after["date"].max() >= pd.to_datetime("2026-11-18")
+    assert len(after) == 50
+
+    # The 2025 result counts every AD list (it was 1% when only the Azores list was read)
+    results = dataset.results_national.set_index(pd.to_datetime(dataset.results_national["election_date"]))
+    parties = dataset.political_families
+    shares = results[parties].div(results[parties].sum(axis=1), axis=0)
+    assert 0.33 < shares.loc["2025-05-18", "AD"] < 0.36
+    assert 0.28 < shares.loc["2022-01-30", "AD"] < 0.33
+    assert 0.30 < shares.loc["2019-10-06", "AD"] < 0.36

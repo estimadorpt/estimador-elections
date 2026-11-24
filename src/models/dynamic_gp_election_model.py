@@ -21,6 +21,28 @@ from src.evaluation.metrics import (
 )
 
 
+
+def hsgp_sqrt_psd(hsgp, kernel: str, amplitude, lengthscale, sqrt_psd_pymc):
+    """Square root of an HSGP's spectral density, with a finite gradient for ExpQuad.
+
+    PyMC returns sqrt(psd). For ExpQuad, psd = amp^2 * sqrt(2 pi) * ls * exp(-(ls * w)^2 / 2)
+    underflows to exactly 0 for the highest basis frequencies when the lengthscale is long
+    relative to the domain: in a 2015 backtest the baseline GP has ls ~ 1,460 days and
+    w_35 ~ 0.033, so the exponent is about -1,200. The gradient of sqrt at 0 is inf, times a
+    zero derivative gives NaN, and NUTS cannot start (step size 1e-233, every draw divergent).
+    Computing amp * exp(log(psd_unit) / 2) gives the same values and a zero gradient there.
+    Matern kernels have polynomial tails and keep PyMC's value.
+    """
+    if kernel != "ExpQuad":
+        return sqrt_psd_pymc
+    eigvals = pm.gp.hsgp_approx.calc_eigenvalues(hsgp.L, hsgp._m)
+    omega = pt.sqrt(eigvals)[:, 0]
+    log_psd_unit = 0.5 * np.log(2.0 * np.pi) + pt.log(lengthscale) - 0.5 * pt.square(lengthscale * omega)
+    sqrt_psd = amplitude * pt.exp(0.5 * log_psd_unit)
+    first = int(getattr(hsgp, "_drop_first", False) is True)
+    return sqrt_psd[first:]
+
+
 class DynamicGPElectionModel(BaseElectionModel):
     """
     A Bayesian election model combining a long-term baseline GP over calendar time
@@ -37,6 +59,14 @@ class DynamicGPElectionModel(BaseElectionModel):
         district_offset_sd_prior_scale: float = 0.1, # Adjusted default
         # beta_sd_prior_scale: float = 0.5, # NEW sensitivity parameter scale --- COMMENTED OUT
         cycle_gp_max_days: int = 90,
+        mask_unreported_parties: bool = True,
+        mask_absent_parties: bool = True,
+        pollster_concentration: bool = False,
+        undecided_variance: bool = False,
+        use_poll_bias: bool = True,
+        poll_bias_per_cycle: bool = False,
+        poll_bias_mean_sd: float = 0.05,
+        center_house_effects: bool = False,
         **kwargs
     ):
         """
@@ -59,6 +89,54 @@ class DynamicGPElectionModel(BaseElectionModel):
 
         # Max days before election for the cycle GP
         self.cycle_gp_max_days = cycle_gp_max_days
+        # A party with a zero in a poll was almost always not reported separately (PAN in 249
+        # polls of 2011-2018, Livre in 196 of 2015-2022, Chega and IL in 34 of 2019), not polled
+        # at 0%. When True those cells leave the poll's likelihood instead of pulling the party's
+        # trend toward zero and its poll_bias toward "polls underestimate it".
+        self.mask_unreported_parties = mask_unreported_parties
+        # A party that did not exist yet (Chega, IL and Livre before 2019, 2019 and 2015) has a
+        # zero in every earlier result. Read as support, those zeros pin its share to ~0 against
+        # millions of votes, which makes the posterior stiff and broke every backtest fit whose
+        # training data end before the party appeared. With this flag such parties are masked
+        # out of the softmax before their first appearance (and out of the forecast if they have
+        # not appeared yet), and a district result cell with zero votes (the party did not stand
+        # there) is left out of the likelihood.
+        self.mask_absent_parties = mask_absent_parties
+        # Experiments from the November 2026 review, off by default (scored in
+        # src/evaluation/backtest.py before any becomes the default):
+        # * pollster_concentration: each firm gets its own Dirichlet-multinomial concentration,
+        #   log-normal around the shared one, so a noisy firm counts for less than a steady one;
+        # * undecided_variance: a poll's variance grows with its undecided share u (ERC deposits,
+        #   src/data/undecided.py): its shares rest on n(1 - u) decided respondents, and how the
+        #   undecided split is uncertain (allocation concentration kappa, Bon et al. 2019).
+        self.pollster_concentration = pollster_concentration
+        self.undecided_variance = undecided_variance
+        # * poll_bias_per_cycle: the industry bias of cycle c is mean + delta_c, the mean with a
+        #   fixed tight prior (poll_bias_mean_sd on the logit scale: it is the shrinkage) and
+        #   delta_c ~ N(0, sigma) with sigma learned from the past cycles. The forecast cycle's
+        #   delta has no result to pin it, so it widens the forecast by sigma: one model for a
+        #   bias that carries over and an election-level polling error. Without the option the
+        #   bias is one vector for every cycle since 2009 (sd learned, HalfNormal(0.1) prior).
+        #   poll_bias_mean_sd = 0 carries nothing over: no party-specific (e.g. Chega) correction,
+        #   only the symmetric per-cycle error.
+        self.poll_bias_per_cycle = poll_bias_per_cycle
+        # use_poll_bias=False drops the industry bias altogether (house effects, zero-sum across
+        # firms, stay): no party-specific correction such as Chega's; the forecast's election-level
+        # uncertainty then comes from predict --polling-error-sd.
+        self.use_poll_bias = use_poll_bias
+        self.poll_bias_mean_sd = poll_bias_mean_sd
+        # House effects sum to zero over parties; with center_house_effects they also sum to zero
+        # over pollsters, so the average firm is taken as unbiased and any industry-wide miss
+        # lives only in poll_bias. Off (the original form), each firm's effect is anchored to past
+        # results and their mean overlaps poll_bias, so a fit without poll_bias still carries
+        # an industry correction through the firms.
+        self.center_house_effects = center_house_effects
+        # Election-level polling error added to forecast draws (sd of each party's shift on the
+        # log scale; 0 = off). The posterior alone covered the result for about half the parties
+        # in the backtest; see src/processing/polling_error.py. Set at prediction time.
+        self.polling_error_sd = 0.0
+        self.polling_error_seed = 20261123
+        self._polling_error_eps = {}
 
         # Configuration for the GPs
         self.baseline_gp_config = baseline_gp_config
@@ -395,6 +473,66 @@ class DynamicGPElectionModel(BaseElectionModel):
         return data_containers
 
 
+    def _existence_log_mask(self, polls: pd.DataFrame = None, lead_days: int = 30) -> np.ndarray:
+        """(calendar_time, parties) log-weights: 0 once a party exists, -30 before.
+
+        A party exists from `lead_days` before its first non-zero share in a training poll or a
+        past national result. One never seen is masked over the whole calendar, so a forecast
+        made before a party appeared gives it no votes.
+        """
+        data_polls = polls if polls is not None else self.polls_train
+        results = self.dataset.results_national
+        dates = pd.to_datetime(pd.Index(self.coords["calendar_time"]))
+        mask = np.zeros((len(dates), len(self.political_families)))
+        for j, party in enumerate(self.political_families):
+            seen = []
+            if party in data_polls.columns:
+                nz = pd.to_datetime(data_polls.loc[data_polls[party] > 0, "date"])
+                if len(nz):
+                    seen.append(nz.min())
+            if results is not None and party in results.columns:
+                nz = pd.to_datetime(results.loc[results[party] > 0, "election_date"])
+                if len(nz):
+                    seen.append(nz.min())
+            if seen:
+                first = min(seen) - pd.Timedelta(days=lead_days)
+                mask[:, j] = np.where(dates >= first, 0.0, -30.0)
+            else:
+                mask[:, j] = -30.0
+        return mask
+
+    def _undecided_shares(self, polls: pd.DataFrame) -> np.ndarray:
+        """Undecided share (0-1) of each poll, from the ERC deposits (src/data/undecided.py)."""
+        from src.data.undecided import poll_undecided_shares
+
+        return poll_undecided_shares(polls)
+
+    def _poll_concentration(self, concentration_polls, data_containers, polls: pd.DataFrame = None):
+        """The Dirichlet-multinomial concentration of each poll: a scalar unless an experiment is on.
+
+        The variance of a poll's share is about p(1 - p) [1/n + 1/(a + 1)] for concentration a.
+        The undecided option adds u / (n (1 - u)) (the shares rest on decided respondents only) and
+        u^2 / (kappa + 1) (the undecided were split in an uncertain way) to the 1/(a + 1) term.
+        """
+        if not (self.pollster_concentration or self.undecided_variance):
+            return concentration_polls
+        conc = concentration_polls
+        if self.pollster_concentration:
+            sigma = pm.HalfNormal("sigma_pollster_concentration", sigma=0.5)
+            raw = pm.Normal("pollster_concentration_raw", 0.0, 1.0, dims="pollsters")
+            per_firm = pm.Deterministic(
+                "pollster_concentration", concentration_polls * pt.exp(sigma * raw), dims="pollsters"
+            )
+            conc = per_firm[data_containers["pollster_idx"]]
+        if self.undecided_variance:
+            data_polls = polls if polls is not None else self.polls_train
+            u = pm.Data("poll_undecided", self._undecided_shares(data_polls), dims="observations")
+            kappa = pm.Gamma("undecided_allocation_concentration", alpha=2.0, beta=0.02)
+            n = data_containers["observed_N_polls"]
+            inv = 1.0 / (conc + 1.0) + u / (n * (1.0 - u)) + pt.square(u) / (kappa + 1.0)
+            conc = 1.0 / inv - 1.0
+        return pt.shape_padright(conc)  # (observations, 1), broadcast over parties
+
     def build_model(self, polls: pd.DataFrame = None) -> pm.Model:
         """
         Build the PyMC model with three GPs over calendar time, house effects,
@@ -437,6 +575,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_baseline, m=baseline_hsgp_m, c=baseline_hsgp_c
             )
             phi_baseline, sqrt_psd_baseline = self.gp_baseline_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_baseline = hsgp_sqrt_psd(
+                self.gp_baseline_time, self.baseline_gp_config["kernel"],
+                baseline_gp_amplitude_sd, baseline_gp_lengthscale, sqrt_psd_baseline,
+            )
 
             coord_name_gp_basis_base = "gp_basis_baseline"
             if coord_name_gp_basis_base not in model.coords:
@@ -479,6 +621,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_medium_term, m=medium_term_hsgp_m, c=medium_term_hsgp_c
             )
             phi_medium_term, sqrt_psd_medium_term = self.gp_medium_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_medium_term = hsgp_sqrt_psd(
+                self.gp_medium_term_time, medium_term_gp_kernel,
+                medium_term_gp_amplitude_sd, medium_term_gp_lengthscale, sqrt_psd_medium_term,
+            )
 
             coord_name_gp_basis_medium = "gp_basis_medium_term"
             if coord_name_gp_basis_medium not in model.coords:
@@ -522,6 +668,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                 cov_func=cov_func_very_short_term, m=very_short_term_hsgp_m, c=very_short_term_hsgp_c
             )
             phi_very_short_term, sqrt_psd_very_short_term = self.gp_very_short_term_time.prior_linearized(X=self.calendar_time_numeric[:, None])
+            sqrt_psd_very_short_term = hsgp_sqrt_psd(
+                self.gp_very_short_term_time, very_short_term_gp_kernel,
+                very_short_term_gp_amplitude_sd, very_short_term_gp_lengthscale, sqrt_psd_very_short_term,
+            )
 
             coord_name_gp_basis_very_short = "gp_basis_very_short_term"
             if coord_name_gp_basis_very_short not in model.coords:
@@ -543,9 +693,11 @@ class DynamicGPElectionModel(BaseElectionModel):
                                                   dims=("calendar_time", "parties_complete"))
 
             # --- Calculate Softmax Probabilities (National) ---
+            exists_log = self._existence_log_mask(polls) if self.mask_absent_parties else None
+            national_logits = national_trend_pt + exists_log if exists_log is not None else national_trend_pt
             latent_popularity_national = pm.Deterministic( # Reverted name
                 "latent_popularity_national",
-                pm.math.softmax(national_trend_pt, axis=1), # Apply softmax along party axis (axis=1)
+                pm.math.softmax(national_logits, axis=1), # Apply softmax along party axis (axis=1)
                 dims=("calendar_time", "parties_complete")
             )
             # --- End Softmax Calculation ---
@@ -559,15 +711,39 @@ class DynamicGPElectionModel(BaseElectionModel):
             # --------------------------------------------------------
             house_effects_sd = pm.HalfNormal("house_effects_sd", sigma=self.house_effect_sd_prior_scale, dims="parties_complete")
             # Non-centered parameterization - Remove sum_axis, use default ZeroSumNormal behavior for now
-            house_effects_raw = pm.ZeroSumNormal("house_effects_raw", sigma=1.0, dims=("pollsters", "parties_complete")) # Removed sum_axis=0
+            house_effects_raw = pm.ZeroSumNormal(
+                "house_effects_raw", sigma=1.0, dims=("pollsters", "parties_complete"),
+                n_zerosum_axes=2 if self.center_house_effects else 1,
+            )
             house_effects = pm.Deterministic("house_effects", house_effects_raw * house_effects_sd[None, :], dims=("pollsters", "parties_complete"))
 
             # --- Average Poll Bias (Zero-Sum across parties) ---
             # Represents systematic relative over/underestimation in polls on average
             # REVERTED PRIOR: Loosen back to 0.1
-            sigma_poll_bias = pm.HalfNormal("sigma_poll_bias", 0.1) # Single sigma for overall magnitude
-            poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
-            poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * sigma_poll_bias, dims="parties_complete")
+            if not self.use_poll_bias:
+                poll_bias = pm.Deterministic("poll_bias", pt.zeros(len(self.political_families)), dims="parties_complete")
+                poll_bias_polls = poll_bias[None, :]
+            elif self.poll_bias_per_cycle:
+                if self.poll_bias_mean_sd > 0:
+                    poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
+                    poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * self.poll_bias_mean_sd, dims="parties_complete")
+                else:  # no bias carried from one cycle to the next: a symmetric election-level error only
+                    poll_bias = pm.Deterministic("poll_bias", pt.zeros(len(self.political_families)), dims="parties_complete")
+                sigma_poll_bias_cycle = pm.HalfNormal("sigma_poll_bias_cycle", 0.1)
+                poll_bias_cycle_raw = pm.ZeroSumNormal(
+                    "poll_bias_cycle_raw", sigma=1.0, dims=("election_cycles", "parties_complete"), n_zerosum_axes=1
+                )
+                poll_bias_cycle = pm.Deterministic(
+                    "poll_bias_cycle",
+                    poll_bias[None, :] + poll_bias_cycle_raw * sigma_poll_bias_cycle,
+                    dims=("election_cycles", "parties_complete"),
+                )
+                poll_bias_polls = poll_bias_cycle[data_containers["poll_cycle_idx"], :]
+            else:
+                sigma_poll_bias = pm.HalfNormal("sigma_poll_bias", 0.1) # Single sigma for overall magnitude
+                poll_bias_raw = pm.ZeroSumNormal("poll_bias_raw", sigma=1.0, dims="parties_complete")
+                poll_bias = pm.Deterministic("poll_bias", poll_bias_raw * sigma_poll_bias, dims="parties_complete")
+                poll_bias_polls = poll_bias[None, :]
 
             # --------------------------------------------------------
             #          5. DISTRICT EFFECTS (Dynamic: Base Offset + Beta)
@@ -620,8 +796,12 @@ class DynamicGPElectionModel(BaseElectionModel):
             latent_polls = pm.Deterministic("latent_polls",
                                              national_trend_polls
                                              + house_effect_polls
-                                             + poll_bias[None, :] # Add poll_bias here
+                                             + poll_bias_polls # industry bias (per cycle with poll_bias_per_cycle)
                                              )
+
+            if self.mask_unreported_parties:
+                reported = data_containers["observed_polls"].get_value(borrow=True) > 0
+                latent_polls = latent_polls + np.where(reported, 0.0, -30.0)
 
             # Apply softmax
             poll_probs = pm.Deterministic("poll_probs", pm.math.softmax(latent_polls, axis=1))
@@ -649,6 +829,13 @@ class DynamicGPElectionModel(BaseElectionModel):
 
                 # _latent_terms_obs_parties = national_trend_at_result + _static_offset_indexed + _dynamic_adjustment_results.T # Shape (obs, parties)
                 _latent_terms_obs_parties = national_trend_at_result + _static_offset_indexed # Keep only static offset
+                if exists_log is not None:
+                    stood = data_containers["observed_results_district"].get_value(borrow=True) > 0
+                    _latent_terms_obs_parties = (
+                        _latent_terms_obs_parties
+                        + exists_log[self.calendar_time_result_district_id]
+                        + np.where(stood, 0.0, -30.0)
+                    )
 
                 latent_district_result_mean = pm.Deterministic("latent_district_result_mean",
                                                                 _latent_terms_obs_parties,
@@ -696,6 +883,8 @@ class DynamicGPElectionModel(BaseElectionModel):
 
                  # Latent mean = trend + offset + sensitivity * swing
                  latent_district_calendar_mean = trend_b_cal + offset_b_cal # Keep only static offset
+                 if exists_log is not None:
+                     latent_district_calendar_mean = latent_district_calendar_mean + exists_log[:, None, :]
                  # Result shape should be (calendar_time, districts, parties)
 
                  # 5. Apply softmax and save
@@ -717,10 +906,11 @@ class DynamicGPElectionModel(BaseElectionModel):
             # WEAKENED PRIOR: Was pm.Gamma(100, 0.1), mean=1000
             # New prior: pm.Gamma(2, 0.01), mean=200, more variance
             concentration_polls = pm.Gamma("concentration_polls", alpha=2, beta=0.01) # Reintroduce concentration
+            poll_concentration = self._poll_concentration(concentration_polls, data_containers, polls)
             pm.DirichletMultinomial(
                 "poll_likelihood",
                 n=data_containers["observed_N_polls"],
-                a=concentration_polls * poll_probs,
+                a=poll_concentration * poll_probs,
                 observed=data_containers["observed_polls"],
                 dims=("observations", "parties_complete"),
             )
@@ -750,7 +940,10 @@ class DynamicGPElectionModel(BaseElectionModel):
                  concentration_national_results = pm.Gamma("concentration_national_results", alpha=100, beta=0.1)
 
                  # Get the national latent probability at the times of the national results
-                 p_results_national = latent_popularity_national[data_containers["calendar_time_result_national_idx"]]
+                 # Index with the constant array, not the data container: with a single national
+                 # result (a 2015 backtest knows only 2011) PyTensor cannot tell the length-1 index
+                 # will not broadcast, and the gradient fails at run time.
+                 p_results_national = latent_popularity_national[np.asarray(self.calendar_time_result_national_id, dtype=int)]
 
                  pm.DirichletMultinomial(
                      "result_national_likelihood",
@@ -1177,6 +1370,38 @@ class DynamicGPElectionModel(BaseElectionModel):
         print("Warning: predict_history not yet implemented/adapted for district model.")
         return az.InferenceData()
 
+    def apply_polling_error(self, shares: xr.DataArray) -> xr.DataArray:
+        """Add the election-level polling error to forecast shares.
+
+        shares has dims (chain, draw, ..., parties_complete). Every (chain, draw) gets one shift
+        per party, Normal(0, polling_error_sd) on the log scale, centred across the parties that
+        exist; the same shifts are reused for every call with the same chain/draw/party sizes,
+        so national and district forecasts move together draw by draw.
+        """
+        sd = float(getattr(self, "polling_error_sd", 0.0) or 0.0)
+        if sd <= 0 or shares is None:
+            return shares
+        if not hasattr(self, "_polling_error_eps"):
+            self._polling_error_eps = {}
+        n_chain, n_draw, n_party = shares.sizes["chain"], shares.sizes["draw"], shares.sizes["parties_complete"]
+        other = [d for d in shares.dims if d not in ("chain", "draw", "parties_complete")]
+        alive = (shares.mean(dim=["chain", "draw"] + other) > 1e-4).values
+        key = (n_chain, n_draw, n_party, sd, tuple(alive))
+        if key not in self._polling_error_eps:
+            rng = np.random.default_rng(getattr(self, "polling_error_seed", 20261123))
+            eps = rng.normal(0.0, sd, (n_chain, n_draw, n_party)) * alive
+            eps[..., alive] -= eps[..., alive].mean(-1, keepdims=True)
+            self._polling_error_eps[key] = eps
+        eps = xr.DataArray(
+            self._polling_error_eps[key],
+            dims=("chain", "draw", "parties_complete"),
+            coords={"parties_complete": shares.coords["parties_complete"]},
+        )
+        logs = np.log(shares.clip(min=1e-300)) + eps
+        out = np.exp(logs - logs.max("parties_complete"))
+        out = out / out.sum("parties_complete")
+        return out.transpose(*shares.dims).assign_coords(shares.coords).rename(shares.name)
+
     def get_latent_popularity(self, idata: az.InferenceData, target_date: pd.Timestamp = None, date_mode: str = 'election_day', district: Optional[str] = None) -> Optional[xr.DataArray]:
         """
         Extracts the posterior distribution of latent popularity at a specific time point,
@@ -1313,7 +1538,7 @@ class DynamicGPElectionModel(BaseElectionModel):
 
 
                 print(f"Successfully calculated popularity adjusted for district '{district}'.")
-                return adjusted_popularity
+                return self.apply_polling_error(adjusted_popularity)
             
             except KeyError as e:
                  print(f"Error accessing district data for '{district}': {e}"); return None
@@ -1323,7 +1548,7 @@ class DynamicGPElectionModel(BaseElectionModel):
         else:
             # Return the national popularity if no district was specified
             print("Returning national latent popularity (no district specified).")
-            return national_pop_at_date
+            return self.apply_polling_error(national_pop_at_date)
 
     def get_district_vote_share_posterior(self, idata: xr.Dataset, target_date: Optional[str] = None, date_mode: str = 'election_day') -> xr.DataArray:
         """Retrieve the posterior distribution of vote shares for all districts at a specific time point.
@@ -1393,13 +1618,13 @@ class DynamicGPElectionModel(BaseElectionModel):
         expected_dims = ('chain', 'draw', 'districts', 'parties_complete')
         if district_shares.dims == expected_dims:
              print(f"DEBUG: Retrieved district shares with expected dims {expected_dims}.")
-             return district_shares
+             return self.apply_polling_error(district_shares)
         else:
              # Attempt to transpose if dimensions are merely swapped, otherwise raise error
              print(f"Warning: Retrieved district shares have unexpected dims {district_shares.dims}. Expected {expected_dims}.")
              try:
                  transposed_shares = district_shares.transpose(*expected_dims)
                  print("DEBUG: Transposed shares to match expected dimensions.")
-                 return transposed_shares
+                 return self.apply_polling_error(transposed_shares)
              except ValueError as e:
                  raise ValueError(f"Could not transpose district shares to expected dimensions {expected_dims}. Error: {e}") from e

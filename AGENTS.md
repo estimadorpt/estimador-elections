@@ -95,13 +95,26 @@ pytest -m "not optional"   # Run only non-optional tests
 pytest tests/test_dataset.py  # Run specific test file
 ```
 
+### Next legislative election (nowcast)
+
+2025-05-18 is the last historical election. The legislative model of record is the random walk
+(`src/forecast_rw.py`, chosen by the November 2026 six-election backtest; `docs/bias_test_2026-11-24.md`
+for the bias forms that were tested and not adopted). Read the "if the election were today" estimate
+with `pixi run nowcast`; once an election is called, `pixi run forecast <YYYY-MM-DD>`. Both use
+4 x 2000+2000 draws (about 50 minutes on the Mac), write `outputs/WIP_legislative_..._rw_<date>`, and
+check the gate on every value in `run.json`: rename the folder `ACCEPTED_` only when it passes. Set
+`ESTIMADOR_WIKIPEDIA_POLLS` to the poll feed's CSV, and pass `--as-of` to freeze the input date.
+
+The earlier GP model stays for comparison: `pixi run train` (placeholder date 2029-10-07, far
+enough out to keep its 90-day campaign GP out of the fit), `pixi run predict` and `pixi run nowcast-gp`.
+
 ### Running the Election Model
 
 All model commands should be run from the project root directory using the module syntax:
 
 ```bash
 # Train a new model
-python -m src.main --mode train --election-date 2026-01-01 --output-dir outputs --draws 1000 --tune 1000
+python -m src.main --mode train --election-date 2029-10-07 --output-dir outputs --draws 1000 --tune 1000
 
 # Generate visualizations from a saved model
 python -m src.main --mode viz --load-dir outputs/latest
@@ -113,7 +126,7 @@ python -m src.main --mode diagnose --load-dir outputs/latest
 python -m src.main --mode predict --load-dir outputs/latest
 
 # Visualize raw data
-python -m src.main --mode visualize-data --election-date 2026-01-01 --output-dir outputs/data_viz
+python -m src.main --mode visualize-data --election-date 2029-10-07 --output-dir outputs/data_viz
 
 # Run cross-validation
 python -m src.main --mode cross-validate --output-dir outputs/cv_results --draws 500 --tune 500
@@ -151,7 +164,7 @@ Key model parameters:
 ### Data Sources
 
 The model integrates multiple data types:
-- Poll data: marktest_polls.csv, polls_renascenca.tsv, popstar_sondagens_data.csv
+- Poll data: marktest_polls.csv (the history; last collected 18 Sep 2025, needs a manual Marktest login) plus wikipedia_legislative_polls.csv (every poll since the 18 May 2025 election, parsed from a verbatim snapshot in `data/wikipedia/` by `python -m src.data.wikipedia_polls <snapshot> data/wikipedia_legislative_polls.csv`; set `ESTIMADOR_WIKIPEDIA_POLLS` to a fresher CSV with the same columns, such as the daily scrape's in estimador-data). `ElectionDataset._load_polls` adds the Wikipedia polls the Marktest list lacks (same pollster, fieldwork end within 3 days = same poll), drops polls dated on an election day (exit polls) and counts a rolling tracker release (Pitagórica's weekly n=804) only by its new interviews. polls_renascenca.tsv and popstar_sondagens_data.csv are not loaded.
 - Election results: legislativas_*.parquet files
 - Economic indicators: gdp.csv
 

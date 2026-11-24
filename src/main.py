@@ -152,6 +152,13 @@ def fit_model(args):
              model_kwargs["hsgp_c"] = args.hsgp_c
              model_kwargs["hsgp_m_cycle"] = args.hsgp_m_cycle
              model_kwargs["hsgp_c_cycle"] = args.hsgp_c_cycle
+             # industry poll bias: one static vector (default), none, or per cycle
+             model_kwargs["use_poll_bias"] = not getattr(args, "no_poll_bias", False)
+             model_kwargs["poll_bias_per_cycle"] = bool(getattr(args, "poll_bias_per_cycle", False))
+             model_kwargs["poll_bias_mean_sd"] = float(getattr(args, "poll_bias_mean_sd", 0.05))
+             model_kwargs["center_house_effects"] = bool(getattr(args, "center_house_effects", False))
+             for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd", "center_house_effects"):
+                 config_to_save[key] = model_kwargs[key]
              config_to_save["baseline_gp_lengthscale"] = args.baseline_gp_lengthscale
              config_to_save["baseline_gp_kernel"] = args.baseline_gp_kernel
              config_to_save["cycle_gp_lengthscale"] = args.cycle_gp_lengthscale
@@ -483,6 +490,12 @@ def load_model(args, directory, election_date=None, baseline_timescales=None, el
             model_kwargs["hsgp_c"] = get_gp_param("hsgp_c", "hsgp_c")
             model_kwargs["hsgp_m_cycle"] = get_gp_param("hsgp_m_cycle", "hsgp_m_cycle")
             model_kwargs["hsgp_c_cycle"] = get_gp_param("hsgp_c_cycle", "hsgp_c_cycle")
+
+            # Model-structure options are read from the run's own config, so predict rebuilds the
+            # model that was trained (a run saved before they existed gets the defaults)
+            for key in ("use_poll_bias", "poll_bias_per_cycle", "poll_bias_mean_sd", "center_house_effects"):
+                if key in loaded_config:
+                    model_kwargs[key] = loaded_config[key]
 
             # Remove None values so model defaults take over if nothing was specified/loaded
             model_kwargs = {k: v for k, v in model_kwargs.items() if v is not None}
@@ -896,14 +909,30 @@ def predict(args):
         district_shares_posterior = None # For dynamic_gp model
         model_instance = elections_model.model_instance 
         hdi_prob = 0.94 
+        polling_error_sd = getattr(args, "polling_error_sd", 0.0) or 0.0
+        if polling_error_sd > 0 and hasattr(model_instance, "apply_polling_error"):
+            model_instance.polling_error_sd = polling_error_sd
+            print(f"Adding an election-level polling error of sd {polling_error_sd} (log scale) to the forecast draws.")
 
         # Determine which method to call based on the actual model instance type
         if isinstance(model_instance, DynamicGPElectionModel) and hasattr(model_instance, 'get_district_vote_share_posterior'):
             print(f"\nCalculating District Vote Share Posterior (mode: {args.prediction_date_mode})...")
-            district_shares_posterior = model_instance.get_district_vote_share_posterior(
-                idata=elections_model.trace,
-                date_mode=args.prediction_date_mode
-            )
+            if getattr(args, "district_rule", "model") == "blend":
+                from src.processing.district_swing import district_posterior_from_national
+                print("District rule: blend swing from the last election, with calibrated district noise.")
+                national_for_districts = model_instance.get_latent_popularity(
+                    idata=elections_model.trace, date_mode=args.prediction_date_mode
+                )
+                district_shares_posterior = (
+                    None
+                    if national_for_districts is None
+                    else district_posterior_from_national(national_for_districts, model_instance.election_date)
+                )
+            else:
+                district_shares_posterior = model_instance.get_district_vote_share_posterior(
+                    idata=elections_model.trace,
+                    date_mode=args.prediction_date_mode
+                )
             if district_shares_posterior is None:
                  print("Could not retrieve district vote shares. Skipping seat predictions.")
                  # --- ADDED: Also skip district forecast JSON generation --- 
@@ -1035,6 +1064,8 @@ def predict(args):
 
                     # Slice the posterior at this specific time point
                     national_summary_slice = national_trend_posterior.isel(calendar_time=closest_time_idx)
+                    if hasattr(model_instance, "apply_polling_error"):
+                        national_summary_slice = model_instance.apply_polling_error(national_summary_slice)
                     
                     # Define hdi_prob for az.summary, consistent with other uses
                     hdi_prob = 0.94 
@@ -1596,6 +1627,30 @@ def main(args=None):
     dynamic_gp_group.add_argument(
         "--hsgp-c-cycle", type=float, default=1.5, help="Expansion factor (c) for Cycle HSGP"
     )
+    dynamic_gp_group.add_argument(
+        "--no-poll-bias",
+        action="store_true",
+        help="Drop the industry poll bias (one party vector shared by every cycle since 2009). House "
+        "effects stay; use predict --polling-error-sd for the election-level uncertainty.",
+    )
+    dynamic_gp_group.add_argument(
+        "--poll-bias-per-cycle",
+        action="store_true",
+        help="Industry bias per cycle: a mean with a fixed tight prior (--poll-bias-mean-sd) plus a "
+        "per-cycle deviation with a learned sd, which also widens the forecast.",
+    )
+    dynamic_gp_group.add_argument(
+        "--poll-bias-mean-sd",
+        type=float,
+        default=0.05,
+        help="Prior sd (logit scale) of the carried-over bias with --poll-bias-per-cycle; 0 carries nothing over.",
+    )
+    dynamic_gp_group.add_argument(
+        "--center-house-effects",
+        action="store_true",
+        help="House effects also sum to zero over pollsters (the average firm is unbiased), so an "
+        "industry-wide miss can only enter through the poll bias term.",
+    )
 
     # --- Prediction Specific Arguments ---
     pred_group = parser.add_argument_group('Prediction Parameters')
@@ -1612,6 +1667,22 @@ def main(args=None):
         choices=['election_day', 'last_poll', 'today'],
         default='election_day',
         help="Specify which date's latent popularity to use for prediction (election day, last poll, or today). Default: election_day"
+    )
+    pred_group.add_argument(
+        "--polling-error-sd",
+        type=float,
+        default=0.0,
+        help="Election-level polling error added to the forecast draws: sd of each party's shift on the "
+        "log scale (0 = off). Calibrated by `python -m src.evaluation.backtest --calibrate`.",
+    )
+    pred_group.add_argument(
+        "--district-rule",
+        choices=["model", "blend"],
+        default="model",
+        help="How district shares are derived for seats: 'model' uses the model's static district offsets; "
+        "'blend' moves the last election's district results by a 50/50 proportional/uniform swing of the "
+        "national draws, with district noise calibrated on past elections (7.4 misallocated seats per "
+        "election in the 2015-2025 backtest with the true national result, against 12.0 for the offsets).",
     )
     pred_group.add_argument(
         "--skip-comparison-in-predict",

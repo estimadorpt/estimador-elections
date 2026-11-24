@@ -384,6 +384,31 @@ class CoalitionManager:
         # TODO: Implement multi-column combination logic
         return None
     
+    def resolve_historical_columns_to_target(self, target_party: str, available_columns: List[str],
+                                           geographic_id: Optional[str] = None) -> List[str]:
+        """Every column that holds votes for a coalition target, to be summed.
+
+        A coalition's parties have run together and apart, and under different
+        lists in different regions, so its vote can sit in several columns of one
+        results file. Returns the columns whose name contains an alias of any
+        component party (e.g. PPD/PSD, CDS-PP, PPD/PSD.CDS-PP, CDS-PP.PPM for AD).
+        Single-party targets return an empty list: they keep the one-column lookup.
+        """
+        component_parties = self.get_component_parties_for_target(target_party, geographic_id)
+        if len(component_parties) < 2:
+            return []
+        metadata = {'territoryCode', 'territoryName', 'territory_code', 'territory_name'}
+        columns = []
+        for col in available_columns:
+            if col in metadata or not isinstance(col, str):
+                continue
+            for component in component_parties:
+                aliases = self.party_aliases.get(component, [component])
+                if any(alias in col for alias in aliases):
+                    columns.append(col)
+                    break
+        return columns
+
     def map_election_data_columns(self, df: pd.DataFrame, 
                                  political_families: List[str],
                                  election_type: str = 'parliamentary',
@@ -417,6 +442,19 @@ class CoalitionManager:
                 df[family] = 0.0
                 continue
                 
+            # A coalition sums every list it or its parties ran under: in 2022 AD's
+            # vote is PPD/PSD (mainland), CDS-PP, PPD/PSD.CDS-PP (Madeira) and
+            # PPD/PSD.CDS-PP.PPM (Azores). Taking one column dropped the rest.
+            # Parliamentary results only: municipal lists mix partners per council.
+            component_columns = (
+                self.resolve_historical_columns_to_target(family, available_columns, geographic_id)
+                if election_type == 'parliamentary' else []
+            )
+            if len(component_columns) > 1:
+                df[family] = df[component_columns].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
+                print(f"    Mapped {' + '.join(component_columns)} -> {family} (coalition sum)")
+                continue
+
             # Resolve historical data to this target party
             historical_column = self.resolve_historical_column_to_target(family, available_columns, geographic_id)
             if historical_column:

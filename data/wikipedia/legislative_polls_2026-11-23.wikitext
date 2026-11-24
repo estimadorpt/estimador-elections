@@ -1,0 +1,941 @@
+===Polling===
+{{For|the events during these years|2025 in Portugal|2026 in Portugal}}
+
+{{sticky header}}
+{| class="wikitable mw-collapsible sortable sticky-header-multi" style="text-align:center;font-size:95%;line-height:16px;"
+|- style="height:42px;"
+! style="width:150px;" rowspan="2"| Polling firm/Link
+! style="width:145px;" rowspan="2"| Fieldwork date
+! class="unsortable" style="width:50px;" rowspan="2"| Sample size
+! class="unsortable" style="width:50px;" rowspan="2"| Turnout
+! class="sortable" style="width:35px;"| [[File:AD - Coligação PSD-CD (Logótipo Secundário).png|28px|link=Democratic Alliance (Portugal, 2024)|AD]]
+! class="sortable" style="width:35px;"| [[File:Letras PS (Portugal).png|25px|link=Socialist Party (Portugal)|PS]]
+! class="sortable" style="width:35px;"| [[File:Logo Chega!.svg|33px|link=Chega (political party)|CH]]
+! class="sortable" style="width:35px;"| [[File:Iniciativa Liberal Icon.png|28px|link=Liberal Initiative (Portugal)|IL]]
+! class="sortable" style="width:35px;"| [[File:Partido LIVRE logo.png|25px|link=LIVRE|L]]
+! class="sortable" style="width:35px;"| [[File:Logo of the Unitary Democratic Coalition.svg|31px|link=Unitary Democratic Coalition|CDU]]
+! class="sortable" style="width:35px;"| [[File:LeftBloc.svg|25px|link=Left Bloc (Portugal)|BE]]
+! class="sortable" style="width:35px;"| [[File:Logo Pessoas-Animais-Natureza (text only).png|25px|link=People–Animals–Nature|PAN]]
+! class="sortable" style="width:35px;"| {{CSS image crop|Image =Logo Juntos pelo Povo.png|bSize = 60|cWidth = 27|cHeight = 25|oTop =0|oLeft = 16|Link = Together for the People| Location = center}}
+! class="unsortable" style="width:35px;" rowspan="2"| {{abbr|O|Others}}
+! class="unsortable" style="width:30px;" rowspan="2"| Lead
+|-
+! class="unsortable" style="color:inherit;background:{{party color|Democratic Alliance (Portugal, 2024)}};"|
+! class="sortable" style="color:inherit;background:{{party color|Socialist Party (Portugal)}};"|
+! class="sortable" style="color:inherit;background:#202056;"|
+! class="sortable" style="color:inherit;background:#00ADEF;"|
+! class="sortable" style="color:inherit;background:{{party color|LIVRE}};"|
+! class="sortable" style="color:inherit;background:{{party color|Unitary Democratic Coalition}};"|
+! class="sortable" style="color:inherit;background:{{party color|Left Bloc (Portugal)}};"|
+! class="sortable" style="color:inherit;background:{{party color|People-Animals-Nature}};"|
+! class="sortable" style="color:inherit;background:{{party color|Together for the People}};"|
+|-
+|[https://executivedigest.sapo.pt/sondagem-ps-sobe-quase-quatro-pontos-e-abre-vantagem-sobre-chega-e-ad/ Intercampus]{{efn|name=Intercampus16}}
+|11–18 Nov 2026
+|609
+|?
+|22.9
+| {{Party shading/PS}} |'''28.2'''
+|23.8
+|8.9
+|4.1
+|3.6
+|2.0
+|2.6
+| {{N/A}}
+|3.9
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |4.4
+|-
+|[https://cnnportugal.iol.pt/politica/tracking-poll Pitagórica]{{efn|name=Pitagórica}}
+|19 Oct–13 Nov 2026
+|804
+|?
+|23.0
+| {{Party shading/PS}} |'''29.4'''
+|27.3
+|4.8
+|3.7
+|2.1
+|2.0
+|1.0
+| {{N/A}}
+|6.7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.1
+|-
+|[https://sapo.pt/artigo/barometro-dn-aximage-ps-recupera-lideranca-e-cava-fosso-de-10-pontos-em-relacao-a-ad-6af4e580faafdbf5cef94179 Aximage]
+|9–10 Nov 2026
+|501
+|?
+|20.4
+| {{Party shading/PS}} |'''30.0'''
+|27.6
+|6.9
+|4.2
+|2.0
+|2.3
+|1.6
+| {{N/A}}
+|5.0
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.4
+|-
+|[https://cnnportugal.iol.pt/politica/tracking-poll Pitagórica]{{efn|name=Pitagórica}}
+|12 Oct–6 Nov 2026
+|804
+|?
+|22.7
+| {{Party shading/PS}} |'''29.6'''
+|27.3
+|5.1
+|3.4
+|2.3
+|2.1
+|1.3
+| {{N/A}}
+|6.2
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.3
+|-
+|[https://www.erc.pt/download.php?fd=15008&l=pt&key=fe04194ea3df58fea40a112d165257c8 Aximage]
+|26 Oct–2 Nov 2026
+|1,063
+|80.1
+|20.8
+| {{Party shading/PS}} |'''28.8'''
+|27.1
+|7.3
+|3.9
+|2.6
+|3.1
+|2.8
+| {{N/A}}
+|3.6
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |1.7
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-9/ Pitagórica]{{efn|name=Pitagórica}}
+|5–30 Oct 2026
+|804
+|?
+|22.3
+| {{Party shading/PS}} |'''29.6'''
+|27.3
+|5.6
+|3.6
+|2.4
+|2.2
+|1.2
+| {{N/A}}
+|5.8
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.3
+|-
+|[https://www.erc.pt/download.php?fd=14992&l=pt&key=6454749e7ba5fd7c83f199aa75bebac5 ICS/ISCTE]
+| 16–25 Oct 2026
+| 808
+| ?
+| 26
+| {{Party shading/PS}}|'''30'''
+| 26
+| 4
+| 4
+| 3
+| 2
+| 0
+| 0
+| 5
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|4
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-8/ Pitagórica]{{efn|name=Pitagórica}}
+|28 Sep–23 Oct 2026
+|804
+|?
+|21.6
+| {{Party shading/PS}} |'''29.4'''
+|27.9
+|6.1
+|3.7
+|2.8
+|1.8
+|1.1
+| {{N/A}}
+|5.6
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |1.5
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-7/ Pitagórica]{{efn|name=Pitagórica}}
+|21 Sep–16 Oct 2026
+|804
+|?
+|22.8
+| {{Party shading/PS}} |'''28.6'''
+|27.9
+|7.0
+|2.8
+|3.2
+|1.8
+|1.3
+| {{N/A}}
+|4.6
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.7
+|-
+|[https://www.erc.pt/download.php?fd=14976&l=pt&key=361a43b2f4d8630fd6986f110da02def Intercampus]{{efn|name=Intercampus15}}
+|6–12 Oct 2026
+|615
+|?
+|21.7
+| {{Party shading/PS}} |'''24.4'''
+|24.0
+|8.0
+|5.5
+|4.7
+|2.8
+|4.1
+| {{N/A}}
+|4.7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.4
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-6/ Pitagórica]{{efn|name=Pitagórica}}
+|14 Sep–10 Oct 2026
+|804
+|?
+|22.9
+| {{Party shading/PS}} |'''28.3'''
+|27.9
+|6.8
+|3.1
+|2.6
+|1.7
+|1.0
+| {{N/A}}
+|5.7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.4
+|-
+|[https://www.erc.pt/download.php?fd=14968&l=pt&key=7603a21c43954f74570374fb2ab8be7d Aximage]
+|6–7 Oct 2026
+|501
+|72.7
+|21.7
+|28.9
+| {{Party shading/Chega}}|'''30.7'''
+|5.6
+|3.3
+|1.8
+|1.7
+|2.0
+|{{N/A}}
+|4.4
+| style="background:#202056; color:white;"|1.8
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-5-/ Pitagórica]{{efn|name=Pitagórica}}
+|7 Sep–3 Oct 2026
+|804
+|?
+|23.9
+| {{Party shading/PS}} |'''27.5'''
+|27.3
+|6.7
+|2.7
+|2.8
+|1.7
+|1.0
+| {{N/A}}
+|6.4
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.2
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-4/ Pitagórica]{{efn|name=Pitagórica}}
+|31 Aug–26 Sep 2026
+|804
+|?
+|24.8
+| {{Party shading/PS}} |'''27.7'''
+|27.4
+|6.3
+|3.3
+|2.4
+|1.6
+|1.1
+| {{N/A}}
+|5.4
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.3
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-5/ Pitagórica]{{efn|name=Pitagórica}}
+|24 Aug–18 Sep 2026
+|804
+|?
+|25.1
+| {{Party shading/PS}} |'''27.9'''
+|27.3
+|6.5
+|3.9
+|2.0
+|1.6
+|0.7
+| {{N/A}}
+|5.0
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.6
+|-
+|[https://www.erc.pt/download.php?fd=14927&l=pt&key=f8339bec59532e9af6875a6e21172576 Aximage]
+|14–15 Sep 2026
+|500
+|66.8
+|21.9
+| {{Party shading/PS}} |'''29.1'''
+|28.6
+|6.3
+|3.1
+|1.7
+|0.9
+|2.5
+| {{N/A}}
+|5.9
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.5
+|-
+|[https://www.erc.pt/download.php?fd=14938&l=pt&key=f3e9b5a4b421bca45ae759615d879b63 Intercampus]{{efn|name=Intercampus12}}
+|7–14 Sep 2026
+|609
+|?
+|23.4
+| {{Party shading/PS}} |'''27.5'''
+|23.9
+|9.9
+|4.0
+|2.2
+|2.8
+|2.0
+| {{N/A}}
+|4.0
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |3.6
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-2/ Pitagórica]{{efn|name=Pitagórica}}
+|18 Aug–12 Sep 2026
+|804
+|?
+|24.3
+| {{Party shading/PS}} |'''28.6'''
+|27.6
+|6.7
+|4.2
+|2.3
+|1.4
+|1.3
+| {{N/A}}
+|3.6
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |1.0
+|-
+|[https://www.erc.pt/download.php?fd=14917&l=pt&key=1bfa25b5237ea179c1c35904dc7b6e6e Aximage]
+|1–7 Sep 2026
+|1,109
+|75.7
+|20.9
+| {{Party shading/PS}} |'''29.7'''
+|25.4
+|7.9
+|3.4
+|3.0
+|1.6
+|2.4
+| {{N/A}}
+|5.7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |4.3
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/breaking-poll-semana-1/ Pitagórica]{{efn|name=Pitagórica}}
+|10 Aug–4 Sep 2026
+|804
+|?
+|25.7
+| {{Party shading/PS}} |'''27.9'''
+|27.1
+|6.1
+|4.0
+|2.4
+|2.2
+|1.3
+| {{N/A}}
+|3.3
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |0.8
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/estudo-potencial-do-partido-reconquista/ Intercampus]{{efn|name=Intercampus14}}
+|10–31 Jul 2026
+|803
+|?
+|22.2
+| {{Party shading/PS}} |'''26.9'''
+|24.4
+|8.1
+|6.9
+|3.0
+|3.0
+|3.2
+| {{N/A}}
+|2.3
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.5
+|-
+|[https://www.erc.pt/download.php?fd=14896&l=pt&key=f7b8a943fe8ba09b8c276d595072e451 Aximage]
+|22–27 Jul 2026
+|802
+|73.6
+|25.0
+| {{Party shading/PS}} |'''28.7'''
+|26.2
+|7.4
+|3.3
+|2.3
+|1.8
+|1.0
+| {{N/A}}
+|4.2
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.5
+|-
+|[https://www.erc.pt/download.php?fd=14886&l=pt&key=00b3c45e392083e0a8ce84612956d522 Aximage]
+|20–21 Jul 2026
+|501
+|75.0
+|23.2
+| {{Party shading/PS}} |'''29.2'''
+|26.4
+|7.4
+|4.6
+|1.8
+|1.3
+|2.1
+| {{N/A}}
+|4.0
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.8
+|-
+|[https://www.erc.pt/download.php?fd=14881&l=pt&key=138d9d63e2ec4484772ba2ddf2b4b251 Intercampus]{{efn|name=Intercampus11}}
+|9–14 Jul 2026
+|604
+| ?
+|22.8
+| {{Party shading/PS}} |'''26.6'''
+|22.1
+|8.7
+|7.8
+|4.7
+|2.1
+|2.9
+| {{N/A}}
+|2.4
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |3.8
+|-
+|[https://www.erc.pt/download.php?fd=14876&l=pt&key=e08d6361c42f4639eff95d9e995a9975 CESOP–UCP]
+|6–10 Jul 2026
+|996
+|?
+| style="background:#CBDCEF"|'''29'''
+| {{Party shading/PS}}|'''29'''
+|21
+|8
+|6
+|3
+|2
+|0
+|0
+|2
+| style="background:white; color:black;"|Tie
+|-
+|[https://www.erc.pt/download.php?fd=14866&l=pt&key=20ae04a131a6e62bab835f5281a34ed0 Aximage]
+|24–25 Jun 2026
+|500
+|73.8
+|25.3
+| {{Party shading/PS}} |'''29.3'''
+|23.6
+|6.5
+|5.8
+|1.6
+|1.5
+|2.2
+| {{N/A}}
+|4.1
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |4.0
+|-
+|[https://www.erc.pt/download.php?fd=14856&l=pt&key=d70193e25cdd3e2fc5b8f3bc3220cef4 Intercampus]{{efn|name=Intercampus10}}
+|10–16 Jun 2026
+|609
+| ?
+|22.4
+| {{Party shading/PS}} |'''27.9'''
+|23.3
+|7.8
+|6.5
+|3.4
+|2.9
+|2.6
+| {{N/A}}
+|3.1
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |4.6
+|-
+|[https://www.erc.pt/download.php?fd=14850&l=pt&key=df9b2870c1adc7deb4592a807c303063 Aximage]
+|9–13 Jun 2026
+|817
+|73.4
+|27.2
+| {{Party shading/PS}} |'''29.5'''
+|25.0
+|7.1
+|3.0
+|1.5
+|2.1
+|1.6
+| {{N/A}}
+|3.1
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |2.3
+|-
+|[https://www.erc.pt/download.php?fd=14838&l=pt&key=88a7c2613432b1bbb2a23fb9d8982815 ICS/ISCTE]
+| 15–24 May 2026
+| 803
+| ?
+| 27
+| {{Party shading/PS}}|'''31'''
+| 20
+| 3
+| 3
+| 5
+| 2
+| 2
+| 0
+| 7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|4
+|-
+|[https://www.erc.pt/download.php?fd=14833&l=pt&key=c4517855c339e3dbb9b63c0d2f9e6b41 Aximage]
+| 18–19 May 2026
+| 505
+| 72.3
+| 23.2
+| {{Party shading/PS}}|'''33.4'''
+| 23.5
+| 6.3
+| 4.7
+| 2.4
+| 1.3
+| 1.3
+| {{N/A}}
+| 3.9
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|9.9
+|-
+|[https://www.erc.pt/download.php?fd=14824&l=pt&key=e184f205e3745c292c54fb17313daff7 Intercampus]{{efn|name=Intercampus9}}
+| 8–14 May 2026
+| 606
+| ?
+|25.6
+| {{Party shading/PS}}|'''26.4'''
+|21.6
+|7.8
+|5.8
+|4.0
+|4.0
+|2.4
+| {{N/A}}
+|2.2
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|0.8
+|-
+|[https://www.erc.pt/download.php?fd=14819&l=pt&key=368fdac0b350cb273302960b9f4d7710 Aximage]
+| 6–7 May 2026
+| 803
+| 72.0
+| 25.1
+| {{Party shading/PS}}|'''31.0'''
+| 25.0
+| 5.6
+| 3.6
+| 2.1
+| 1.4
+| 2.3
+| {{N/A}}
+| 3.9
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|5.9
+|-
+|[https://www.erc.pt/download.php?fd=14796&l=pt&key=d4bbfbae13823d3ef6ed0cb0f9f7040c Aximage]
+|10–15 Apr 2026
+|500
+|71.7
+|24.3
+| {{Party shading/PS}}|'''30.6'''
+|23.6
+|7.0
+|5.8
+|2.5
+|0.8
+|1.8
+| {{N/A}}
+|3.7
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|6.3
+|-
+|[https://www.erc.pt/download.php?fd=14801&l=pt&key=6ac6918b005523940c6b9eee5127c6c8 Intercampus]{{efn|name=Intercampus8}}
+| 8–14 Apr 2026
+| 608
+| ?
+|23.7
+| {{Party shading/PS}}|'''26.9'''
+|21.9
+|8.3
+|6.1
+|4.5
+|3.0
+|3.0
+| {{N/A}}
+|2.6
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|3.2
+|-
+|[https://www.erc.pt/download.php?fd=14781&l=pt&key=73504ba6437efb42f3250b8275ab77db ICS/ISCTE]
+|27 Feb–8 Mar 2026
+|801
+|?
+| style="background:#CBDCEF"|'''29'''
+| {{Party shading/PS}}|'''29'''
+|25
+|5
+|2
+|4
+|2
+|1
+|0
+|3
+| style="background:white; color:black;"|Tie
+|-
+|[https://www.erc.pt/download.php?fd=14776&l=pt&key=cc2157b4e0972e258d941fe8d7544cae Aximage]
+| 2–3 Mar 2026
+| 551
+| 73.9
+| 26.6
+| {{Party shading/PS}}|'''27.0'''
+| 25.8
+| 7.4
+| 4.2
+| 2.7
+| 0.9
+| 1.3
+| {{N/A}}
+| 4.1
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;"|0.4
+|-
+|[https://www.erc.pt/download.php?fd=14626&l=pt&key=25f41b69fa1a95040e548104ca0031e1 Intercampus]{{efn|name=Intercampus7}}
+| 6–13 Jan 2026
+| 806
+| ?
+| style="background:#CBDCEF"|'''26.3'''
+| 23.4
+| 25.1
+| 9.4
+| 7.6
+| 2.2
+| 1.8
+| 1.3
+| {{N/A}}
+| 2.9
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|1.2
+|-
+|[https://www.erc.pt/download.php?fd=14561&l=pt&key=9a0f6938b2f139c4b66e6649027e4bae Pitagórica]
+|11–19 Dec 2025
+|1,000
+|?
+| style="background:#CBDCEF"|'''29.7'''
+|23.1
+|22.6
+|7.3
+|7.3
+|2.6
+|1.3
+|0.5
+| {{N/A}}
+|5.6
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|6.6
+|-
+|[https://www.erc.pt/download.php?fd=14556&l=pt&key=09fbcb1d0a7ea523de0630f5f76ed9a3 Intercampus]{{efn|name=Intercampus6}}
+| 12–16 Dec 2025
+| 611
+| ?
+| style="background:#CBDCEF"|'''25.6'''
+| 25.4
+| 23.5
+| 9.1
+| 6.6
+| 3.3
+| 3.1
+| 1.4
+| {{N/A}}
+| 2.1
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|0.2
+|-
+|[https://www.erc.pt/download.php?fd=14545&l=pt&key=616f030dc04d4b0d5d3d59a750c987e9 CESOP–UCP]
+| 4–12 Dec 2025
+| 1,185
+| ?
+| style="background:#CBDCEF"|'''29'''
+| 23
+| 24
+| 9
+| 6
+| 3
+| 2
+| <1
+| 0
+| 4
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|5
+|-
+|[https://www.erc.pt/download.php?fd=14512&l=pt&key=041fb27e942f3eff0a3f98f2f1f5179a Intercampus]{{efn|name=Intercampus5}}
+| 14–19 Nov 2025
+| 611
+| ?
+| style="background:#CBDCEF"|'''26.1'''
+| 25.2
+| 23.6
+| 8.0
+| 6.5
+| 3.9
+| 1.9
+| 2.5
+| {{N/A}}
+| 2.3
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|0.9
+|-
+|[https://www.erc.pt/download.php?fd=14515&l=pt&key=1e47066036bd34f40aba804be008fbc0 ICS/ISCTE]
+|7–17 Nov 2025
+|807
+|?
+| style="background:#CBDCEF"|'''31'''
+|28
+|24
+|4
+|3
+|3
+|2
+|0
+|0
+|5
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|3
+|-
+|[https://www.erc.pt/download.php?fd=14496&l=pt&key=a02d55e31df00aa7abac22e330d0e4e6 Pitagórica]
+|5–14 Nov 2025
+|1,000
+|?
+| style="background:#CBDCEF"|'''38.5'''
+|26.4
+|16.7
+|5.3
+|5.7
+|2.4
+|0.7
+|0.9
+| {{N/A}}
+|3.4
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|12.1
+|-
+|[https://www.erc.pt/download.php?fd=14489&l=pt&key=0e104c3987ee5bacd73a26c2b799c9b7 Aximage]
+| 23–27 Oct 2025
+| 651
+| 73.7
+| style="background:#CBDCEF"|'''32.4'''
+| 23.8
+| 21.9
+| 5.9
+| 6.1
+| 3.2
+| 1.3
+| 2.0
+| {{N/A}}
+| 3.4
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|8.6
+|-
+|[https://www.erc.pt/download.php?fd=14484&l=pt&key=b3a1038fb5970e6b9c5417f65140d5f5 Intercampus]{{efn|name=Intercampus4}}
+|20–26 Oct 2025
+| 609
+| ?
+| style="background:#CBDCEF"|'''28.0'''
+| 25.4
+| 24.4
+| 7.0
+| 5.4
+| 4.0
+| 1.4
+| 3.0
+| {{N/A}}
+| 1.4
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|2.6
+|- style="background:#EFEFEF";"
+| '''[[2025 Portuguese local elections|2025 local elections]]'''{{efn|name=L2025}}
+| 12 Oct 2025
+| {{N/A}}
+| 59.3
+| style="background:#CBDCEF"|'''35.6'''<br/>{{font|size=75%|font=Verdana|text=(98)}}
+| 33.2<br/>{{font|size=75%|font=Verdana|text=(90)}}
+| 11.9<br/>{{font|size=75%|font=Verdana|text=(27)}}
+| 1.6<br/>{{font|size=75%|font=Verdana|text=(1)}}
+| 1.1<br/>{{font|size=75%|font=Verdana|text=(1)}}
+| 5.7<br/>{{font|size=75%|font=Verdana|text=(12)}}
+| 1.0<br/>{{font|size=75%|font=Verdana|text=(0)}}
+| 0.2<br/>{{font|size=75%|font=Verdana|text=(0)}}
+| 0.5<br/>{{font|size=75%|font=Verdana|text=(1)}}
+| 9.2<br/>{{font|size=75%|font=Verdana|text=(0)}}
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|'''2.4'''
+|-
+|[https://www.erc.pt/download.php?fd=14496&l=pt&key=a02d55e31df00aa7abac22e330d0e4e6 Pitagórica]
+|6–10 Oct 2025
+|625
+|?
+| style="background:#CBDCEF"|'''34.5'''
+|25.2
+|21.9
+|3.8
+|4.5
+|3.3
+|1.6
+|1.4
+| {{N/A}}
+|3.8
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|9.3
+|-
+|[https://www.erc.pt/download.php?fd=14228&l=pt&key=8dd77929c921f740e645a2b92b8ad4d9 Aximage]
+|2–5 Sep 2025
+|570
+|51.4
+|25.9
+|23.6
+| {{Party shading/Chega}}|'''26.8'''
+|6.2
+|6.5
+|3.1
+|2.4
+|1.7
+|{{N/A}}
+|3.8
+| style="background:#202056; color:white;"|0.9
+|-
+|[https://www.erc.pt/download.php?fd=14210&l=pt&key=b08e684a33f344cf68489050bb2f0a63 Intercampus]{{efn|name=Intercampus3}}
+|7–14 Aug 2025
+|611
+| ?
+| style="background:#CBDCEF"|'''28.9'''
+| 26.3
+| 22.1
+| 8.1
+| 6.0
+| 1.7
+| 2.8
+| 3.2
+| {{N/A}}
+| 1.0
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|2.6
+|-
+|[https://www.erc.pt/download.php?fd=14175&l=pt&key=60d476d9fb2f286ff61d12bab829e631 Intercampus]{{efn|name=Intercampus2}}
+|11–18 Jul 2025
+|606
+| ?
+| style="background:#CBDCEF"|'''26.3'''
+| 23.6
+| 20.2
+| 7.3
+| 9.9
+| 4.0
+| 2.8
+| 3.3
+| {{N/A}}
+| 2.6
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|2.7
+|-
+|[https://www.erc.pt/download.php?fd=14144&l=pt&key=3b83f38a4a417b5971f9d681154a3669 Intercampus]{{efn|name=Intercampus1}}
+|5–15 Jun 2025
+|616
+| ?
+| style="background:#CBDCEF"|'''29.9'''
+| 21.8
+| 21.7
+| 8.4
+| 7.4
+| 3.4
+| 1.8
+| 3.9
+| {{N/A}}
+| 1.8
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|8.1
+|-
+| colspan="15" style="background:#A0A0A0" |
+|- style="background:#EFEFEF"
+|'''[[2025 Portuguese legislative election|2025 legislative election]]'''<ref name="resultados">{{cite news |url=https://www.legislativas2025.mai.gov.pt/resultados/globais|title=Resultados Globais Legislativas 2025 |language=pt |publisher=[[Ministry of Internal Administration (Portugal)|Ministry of Internal Administration]]|location=Lisbon |access-date=1 June 2025}}</ref>
+| 18 May 2025
+| {{N/A}}
+| 58.3
+| style="background:#CBDCEF"|'''31.8'''<br/>{{font|size=75%|font=Verdana|text=91}}
+| 22.8<br/>{{font|size=75%|font=Verdana|text=58}}
+| 22.8<br/>{{font|size=75%|font=Verdana|text=60}}
+| 5.4<br/>{{font|size=75%|font=Verdana|text=9}}
+| 4.1<br/>{{font|size=75%|font=Verdana|text=6}}
+| 2.9<br/>{{font|size=75%|font=Verdana|text=3}}
+| 2.0<br/>{{font|size=75%|font=Verdana|text=1}}
+| 1.4<br/>{{font|size=75%|font=Verdana|text=1}}
+| 0.3<br/>{{font|size=75%|font=Verdana|text=1}}
+| 6.5<br/>{{font|size=75%|font=Verdana|text=0}}
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|'''9.0'''
+|-
+| colspan="15" style="background:#A0A0A0" |
+|}
+
+====Other scenarios====
+{{hidden begin|titlestyle=background:#cff|title=Hypothetical polling|contentstyle=border:solid 1px silver; padding:8px; background:white;}}
+'''With "Reconquista"'''
+{| class="wikitable mw-collapsible sortable sticky-header-multi" style="text-align:center;font-size:95%;line-height:16px;"
+|- style="height:42px;"
+! style="width:150px;" rowspan="2"| Polling firm/Link
+! style="width:145px;" rowspan="2"| Fieldwork date
+! class="unsortable" style="width:50px;" rowspan="2"| Sample size
+! class="unsortable" style="width:50px;" rowspan="2"| Turnout
+! class="sortable" style="width:35px;"| [[File:AD - Coligação PSD-CD (Logótipo Secundário).png|28px|link=Democratic Alliance (Portugal, 2024)|AD]]
+! class="sortable" style="width:35px;"| [[File:Letras PS (Portugal).png|25px|link=Socialist Party (Portugal)|PS]]
+! class="sortable" style="width:35px;"| [[File:Logo Chega!.svg|33px|link=Chega (political party)|CH]]
+! class="sortable" style="width:35px;"| [[File:Iniciativa Liberal Icon.png|28px|link=Liberal Initiative (Portugal)|IL]]
+! class="sortable" style="width:35px;"| [[File:Partido LIVRE logo.png|25px|link=LIVRE|L]]
+! class="sortable" style="width:35px;"| [[File:Logo of the Unitary Democratic Coalition.svg|31px|link=Unitary Democratic Coalition|CDU]]
+! class="sortable" style="width:35px;"| [[File:LeftBloc.svg|25px|link=Left Bloc (Portugal)|BE]]
+! class="sortable" style="width:35px;"| [[File:Logo Pessoas-Animais-Natureza (text only).png|25px|link=People–Animals–Nature|PAN]]
+! class="sortable" style="width:35px;"| {{CSS image crop|Image =Logo Juntos pelo Povo.png|bSize = 60|cWidth = 27|cHeight = 25|oTop =0|oLeft = 16|Link = Together for the People| Location = center}}
+! class="sortable" style="width:35px;"| [[Reconquista (Portuguese nationalist group)|R]]
+! class="unsortable" style="width:35px;" rowspan="2"| {{abbr|O|Others}}
+! class="unsortable" style="width:30px;" rowspan="2"| Lead
+|-
+! class="unsortable" style="color:inherit;background:{{party color|Democratic Alliance (Portugal, 2024)}};"|
+! class="sortable" style="color:inherit;background:{{party color|Socialist Party (Portugal)}};"|
+! class="sortable" style="color:inherit;background:#202056;"|
+! class="sortable" style="color:inherit;background:#00ADEF;"|
+! class="sortable" style="color:inherit;background:{{party color|LIVRE}};"|
+! class="sortable" style="color:inherit;background:{{party color|Unitary Democratic Coalition}};"|
+! class="sortable" style="color:inherit;background:{{party color|Left Bloc (Portugal)}};"|
+! class="sortable" style="color:inherit;background:{{party color|People-Animals-Nature}};"|
+! class="sortable" style="color:inherit;background:{{party color|Together for the People}};"|
+! class="sortable" style="color:inherit;background:#323996;"|
+|-
+|[https://www.erc.pt/pt/depositos/deposito-2026/estudo-potencial-do-partido-reconquista/ Intercampus]{{efn|name=Intercampus13}}
+|10–31 Jul 2026
+|803
+| ?
+|22.4
+| {{Party shading/PS}} |'''25.4'''
+|20.8
+|7.5
+|7.4
+|3.3
+|2.7
+|2.7
+| {{N/A}}
+|5.8
+|2.0
+| style="background:{{party color|Socialist Party (Portugal)}}; color:white;" |3.0
+|-
+| colspan="16" style="background:#A0A0A0" |
+|- style="background:#EFEFEF"
+|'''[[2025 Portuguese legislative election|2025 legislative election]]'''<ref name="resultados" />
+| 18 May 2025
+| {{N/A}}
+| 58.3
+| style="background:#CBDCEF"|'''31.8'''<br/>{{font|size=75%|font=Verdana|text=91}}
+| 22.8<br/>{{font|size=75%|font=Verdana|text=58}}
+| 22.8<br/>{{font|size=75%|font=Verdana|text=60}}
+| 5.4<br/>{{font|size=75%|font=Verdana|text=9}}
+| 4.1<br/>{{font|size=75%|font=Verdana|text=6}}
+| 2.9<br/>{{font|size=75%|font=Verdana|text=3}}
+| 2.0<br/>{{font|size=75%|font=Verdana|text=1}}
+| 1.4<br/>{{font|size=75%|font=Verdana|text=1}}
+| 0.3<br/>{{font|size=75%|font=Verdana|text=1}}
+| {{N/A}}
+| 6.5<br/>{{font|size=75%|font=Verdana|text=0}}
+| style="background:{{party color|Democratic Alliance (Portugal, 2024)}}; color:white;"|'''9.0'''
+|-
+| colspan="16" style="background:#A0A0A0" |
+|}
+{{hidden end}}
