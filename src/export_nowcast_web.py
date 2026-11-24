@@ -122,11 +122,13 @@ def trend_series(run_dir: str, since: str, interval: float = 0.9) -> dict:
     idata = az.from_zarr(os.path.join(run_dir, "trace.zarr"))
     eta = idata.posterior["eta"]
     times = pd.to_datetime(eta.coords["time"].values)
-    # The first saved week on or after the election is the one the result is fitted to
-    # (prepare_rw_data's result_t): it is dated as the election itself.
-    keep = np.where(times >= pd.Timestamp(since))[0]
-    if len(keep) == 0:
-        raise ExportRefused(f"the saved latent path has no week from {since}")
+    # The grid week nearest the election (earlier on a tie, as _to_grid_index picks it) is the
+    # one the result is fitted to; the light trace always keeps it. It is dated as the election.
+    gap = np.abs((times - pd.Timestamp(since)).days.values)
+    first = int(np.argmin(gap))
+    if gap[first] > 3:
+        raise ExportRefused(f"the saved latent path has no week at the {since} election")
+    keep = np.arange(first, len(times))
     parties = [str(p) for p in eta.coords["parties"].values]
     x = eta.isel(time=keep).stack(s=("chain", "draw")).transpose("s", "time", "parties").values.astype(float)
     x = x - x.max(-1, keepdims=True)
@@ -142,8 +144,7 @@ def trend_series(run_dir: str, since: str, interval: float = 0.9) -> dict:
             "high": [round(float(v), 4) for v in q[1, :, j]],
         }
     dates = [str(t.date()) for t in times[keep]]
-    if (times[keep[0]] - pd.Timestamp(since)).days < 7:
-        dates[0] = str(pd.Timestamp(since).date())
+    dates[0] = str(pd.Timestamp(since).date())
     return {
         "dates": dates,
         "interval": interval,
@@ -308,10 +309,12 @@ def write(files: dict, web_root: str) -> list[str]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("run_dir", help="a forecast_rw output folder")
-    ap.add_argument("--web", required=True, help="the estimador-web checkout to write into")
+    ap.add_argument("--web", help="the estimador-web checkout to write into (not needed with --check-only)")
     ap.add_argument("--fit-commit", default=None, help="the commit the fit ran at (default: the run's fit_commit.txt)")
     ap.add_argument("--check-only", action="store_true", help="run every check, write nothing")
     args = ap.parse_args(argv)
+    if not args.check_only and not args.web:
+        ap.error("--web is required unless --check-only")
     try:
         files = build(args.run_dir, code_dir=os.path.dirname(os.path.abspath(__file__)), fit_code=args.fit_commit)
     except ExportRefused as e:
