@@ -73,6 +73,12 @@ class RWConfig:
     #   they never add an industry-wide bias.
     pollster_concentration: bool = False
     house_drift_sd_prior: float = 0.0
+    # Momentum bias (24 Nov 2026 bias test, M2): polls misread a party in proportion to how far
+    # its opinion has moved since the previous election, logit offset = beta x (eta now - eta at
+    # the last result), centred over the parties that existed at both dates. beta < 0 means a
+    # growing party is under-polled and a shrinking one over-polled, whichever party it is.
+    # Normal(0, momentum_bias_sd) prior on beta; 0 = off.
+    momentum_bias_sd: float = 0.0
 
 
 @dataclass
@@ -92,6 +98,7 @@ class RWData:
     target_t: int
     extra: Dict = field(default_factory=dict)
     poll_reported: Optional[np.ndarray] = None  # (N, P) bool; None = every existing party reported
+    poll_prev_result_t: Optional[np.ndarray] = None  # (N,) grid index of the previous result; -1 if none
 
 
 def _to_grid_index(dates: pd.Series | pd.DatetimeIndex, grid: pd.DatetimeIndex) -> np.ndarray:
@@ -168,13 +175,21 @@ def prepare_rw_data(
     result_t = _to_grid_index(res["election_date"], grid)
     result_counts = np.where(exists[result_t], result_counts, 0)
 
+    # the grid week of the result that opened each poll's cycle (-1 before the first result)
+    poll_cycle = cycle_of(polls["date"]).astype(int)
+    result_t_by_date = dict(zip(res["election_date"], result_t))
+    opening = np.array(
+        [result_t_by_date.get(cycles_end[c - 1], -1) if c >= 1 else -1 for c in range(len(cycles_end))], dtype=int
+    )
+    poll_prev_result_t = opening[poll_cycle]
+
     return RWData(
         parties=parties,
         grid=grid,
         exists=exists,
         poll_t=poll_t,
         poll_pollster=pollster_codes.astype(int),
-        poll_cycle=cycle_of(polls["date"]).astype(int),
+        poll_cycle=poll_cycle,
         poll_counts=poll_counts,
         pollsters=list(pollsters),
         cycles=cycle_names,
@@ -184,7 +199,18 @@ def prepare_rw_data(
         target_t=len(grid) - 1,
         extra={"first_seen": first_seen},
         poll_reported=poll_reported,
+        poll_prev_result_t=poll_prev_result_t,
     )
+
+
+def momentum_weights(data: RWData) -> np.ndarray:
+    """(N, P) 1.0 where a poll's party existed both at the poll and at the previous result."""
+    prev = data.poll_prev_result_t
+    if prev is None:
+        return np.zeros_like(data.poll_counts, dtype=float)
+    has = prev >= 0
+    both = data.exists[data.poll_t] & data.exists[np.where(has, prev, 0)] & has[:, None]
+    return both.astype(float)
 
 
 def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
@@ -248,6 +274,14 @@ def build_rw_model(data: RWData, cfg: RWConfig = RWConfig()) -> pm.Model:
         else:
             poll_mask = log_mask[data.poll_t]
         logits_polls = eta[data.poll_t] + house_polls + bias[data.poll_cycle] + poll_mask
+        if cfg.momentum_bias_sd > 0:
+            w = momentum_weights(data)
+            prev = np.where(data.poll_prev_result_t >= 0, data.poll_prev_result_t, 0)
+            move = eta[data.poll_t] - eta[prev]
+            n_w = np.maximum(w.sum(1, keepdims=True), 1.0)
+            centred = (move - (move * w).sum(axis=1, keepdims=True) / n_w) * w
+            beta = pm.Normal("momentum_beta", 0.0, cfg.momentum_bias_sd)
+            logits_polls = logits_polls + beta * centred
         p_polls = pt.special.softmax(logits_polls, axis=1)
         conc = pm.Gamma("concentration_polls", alpha=cfg.poll_concentration_prior[0], beta=cfg.poll_concentration_prior[1])
         conc_polls = conc

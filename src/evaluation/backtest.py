@@ -220,7 +220,9 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     idata = _sample(model, draws, tune, chains, seed, target_accept=0.9)
     nat = national_share_draws(idata, data)
     diag_vars = ["sigma_rw", "sigma_house", "sigma_bias", "concentration_polls", "house", "bias"]
-    diag_vars += [v for v in ("sigma_house_drift", "sigma_pollster_concentration") if v in idata.posterior]
+    diag_vars += [
+        v for v in ("sigma_house_drift", "sigma_pollster_concentration", "momentum_beta", "bias_mean") if v in idata.posterior
+    ]
     diag = _diagnostics(idata, var_names=diag_vars)
     bias = idata.posterior["bias"].mean(("chain", "draw")).to_pandas()
     extra = {
@@ -234,6 +236,11 @@ def run_rw(ds, target, draws, tune, chains, seed, cfg_overrides: Optional[Dict] 
     post = idata.posterior
     if "sigma_house_drift" in post:
         extra["sigma_house_drift"] = round(float(post["sigma_house_drift"].mean()), 4)
+    if "momentum_beta" in post:
+        b = post["momentum_beta"]
+        extra["momentum_beta"] = {"mean": round(float(b.mean()), 4), "sd": round(float(b.std()), 4)}
+    if "bias_mean" in post:
+        extra["bias_mean"] = post["bias_mean"].mean(("chain", "draw")).to_series().round(3).to_dict()
     if "pollster_concentration" in post:
         extra["sigma_pollster_concentration"] = round(float(post["sigma_pollster_concentration"].mean()), 3)
         extra["pollster_concentration"] = post["pollster_concentration"].median(("chain", "draw")).to_series().round(1).to_dict()
@@ -470,6 +477,14 @@ FITS = {
     # and house effects that may move between election cycles
     "rw_nobias_pconc": ("rw", {"bias_sd_prior": 1e-3, "pollster_concentration": True}, {"rw_nobias_pconc": "blend_noise"}),
     "rw_nobias_hdrift": ("rw", {"bias_sd_prior": 1e-3, "house_drift_sd_prior": 0.05}, {"rw_nobias_hdrift": "blend_noise"}),
+    # bias test of 24 Nov 2026 (rules in BIAS_TEST_RULES, decided before any of these ran):
+    # M1, a persistent mean bias under a tight prior plus a per-cycle miss around it
+    "rw_persistent08": ("rw", {"persistent_bias": True, "persistent_bias_sd": 0.08}, {"rw_persistent08": "blend_noise"}),
+    # M2, no industry bias but a momentum bias: polls misread a party by how far it has moved
+    # since the last election (the same coefficient for every party)
+    "rw_nobias_momentum": ("rw", {"bias_sd_prior": 1e-3, "momentum_bias_sd": 0.2}, {"rw_nobias_momentum": "blend_noise"}),
+    # M3, rw_nobias plus a late swing learned from the other elections, is not a fit: it is
+    # derived from rw_nobias's saved draws by `derive_late_swing` (--late-swing).
     "poll_average": ("poll_average", {}, {"poll_average": "blend"}),
     "last_result": ("last_result", {}, {"last_result": "model"}),
     "latest_per_firm": ("latest_per_firm", {}, {"latest_per_firm": "blend"}),
@@ -731,6 +746,153 @@ def rescore_districts(out_dir: str, seed: int = 20261123) -> int:
 PAIRED_METRICS = ["nat_crps", "nat_mae", "seat_rps", "seat_logscore", "winner_logscore"]
 
 
+# ----------------------------------------------------------------------------------------
+# Bias test of 24 Nov 2026
+# ----------------------------------------------------------------------------------------
+# Question: does any directional term beat a zero-mean industry error? Candidates against
+# rw_nobias (M0): rw_persistent08 (M1), rw_nobias_momentum (M2) and rw_nobias_lateswing (M3).
+# The unit is the election; the metric is national CRPS at the tau each model gets by the
+# coverage rule, left out one election at a time (the calibrated number the nowcast uses),
+# pooled over 7, 28 and 56 days. A candidate replaces M0 only if every rule below holds.
+BIAS_TEST_RULES = {
+    "min_pooled_gain": 0.05,  # pooled national CRPS at least 5% lower than M0's
+    "min_elections_won": 5,  # lower per-election pooled CRPS in at least 5 of the 6 elections
+    "drop_one": True,  # still lower on average after leaving out any one election
+    "every_horizon": True,  # lower mean CRPS at every horizon (equal counts as no worse)
+    "seat_rps_no_worse": True,  # pooled seat RPS not higher than M0's
+    "max_sign_flip_p": 0.10,  # exact two-sided sign-flip test over elections
+}
+
+
+def derive_late_swing(
+    out_dir: str,
+    base: str = "rw_nobias",
+    name: Optional[str] = None,
+    ref_horizon: int = 7,
+    min_share: float = 0.005,
+    seed: int = 20261123,
+) -> List[str]:
+    """M3: the base model's draws plus the late swing learned from the other elections.
+
+    For election E at horizon h > ref_horizon, party p moves by the mean over the other
+    elections e of log(median share at ref_horizon) - log(median share at h) in the base
+    model's own forecasts of e, over the elections where p has at least `min_share` in both.
+    The shift is added to every draw's log share, which is then renormalised. At ref_horizon
+    the forecast is the base one, so the swing fades out by the final week. Writes
+    `<name>__E__hH__national.npy` with a summary and party scores like a fit.
+    """
+    name = name or f"{base}_lateswing"
+    found = {}
+    for f in sorted(os.listdir(out_dir)):
+        parts = f.split("__")
+        if len(parts) == 4 and parts[0] == base and parts[3] == "national.npy":
+            found[(parts[1], int(parts[2][1:]))] = np.load(os.path.join(out_dir, f)).astype(float)
+    if not found:
+        raise FileNotFoundError(f"no {base}__*__national.npy in {out_dir}")
+    med = {k: np.median(v, axis=0) for k, v in found.items()}
+    elections = sorted({E for E, _ in found})
+    _, _, seats_map = load_truth()
+    written = []
+    for (E, h), nat in sorted(found.items()):
+        offset = np.zeros(nat.shape[1])
+        if h != ref_horizon:
+            for p in range(nat.shape[1]):
+                moves = [
+                    np.log(med[(e, ref_horizon)][p]) - np.log(med[(e, h)][p])
+                    for e in elections
+                    if e != E
+                    and (e, ref_horizon) in med
+                    and (e, h) in med
+                    and min(med[(e, ref_horizon)][p], med[(e, h)][p]) >= min_share
+                ]
+                offset[p] = float(np.mean(moves)) if moves else 0.0
+        logn = np.log(np.clip(nat, 1e-300, None)) + offset[None, :]
+        shifted = np.exp(logn - logn.max(1, keepdims=True))
+        shifted /= shifted.sum(1, keepdims=True)
+        tag = f"{name}__{E}__h{h:03d}"
+        np.save(os.path.join(out_dir, tag + "__national.npy"), shifted.astype(np.float32))
+        dist = districts_from_national(shifted, E, noise=True, seed=seed)
+        summary, party = score(shifted, dist, E, seats_map)
+        summary.update(model=name, fit=name, district_rule="blend_noise", election=E, horizon=h, derived_from=base)
+        party.insert(0, "model", name)
+        party.insert(1, "election", E)
+        party.insert(2, "horizon", h)
+        party.to_csv(os.path.join(out_dir, tag + "__parties.csv"), index=False)
+        extra = {"late_swing_log_offset": dict(zip(PARTIES, np.round(offset, 4)))}
+        with open(os.path.join(out_dir, tag + ".json"), "w") as fh:
+            json.dump({"summary": summary, "extra": extra}, fh, indent=1, default=str)
+        written.append(tag)
+    return written
+
+
+def _calibrated_rows(out_dir: str, model: str, horizons: Sequence[int]) -> pd.DataFrame:
+    """Per election and horizon, a model's scores at its coverage-rule tau (left out one election)."""
+    rows = []
+    for h in horizons:
+        path = os.path.join(out_dir, f"polling_error_h{h:03d}.csv")
+        df = pd.read_csv(path)
+        d = df[(df.model == model) & (df.form == "iid")]
+        if d.empty:
+            raise ValueError(f"{model} has no h{h} calibration in {path}")
+        rows.append(loo_tau(d, "coverage")[["election", "horizon", "tau_chosen", "nat_crps", "seat_rps"]])
+    return pd.concat(rows, ignore_index=True)
+
+
+def sign_flip_p(d: np.ndarray) -> float:
+    """Exact two-sided sign-flip p-value of mean(d) against zero, over every sign pattern."""
+    d = np.asarray(d, float)
+    n = len(d)
+    signs = np.array([[1 if (k >> i) & 1 else -1 for i in range(n)] for k in range(2**n)])
+    stats = np.abs((signs * d[None, :]).mean(1))
+    return float((stats >= abs(d.mean()) - 1e-12).mean())
+
+
+def bias_test_verdict(
+    out_dir: str,
+    base: str = "rw_nobias",
+    candidates: Sequence[str] = ("rw_persistent08", "rw_nobias_momentum", "rw_nobias_lateswing"),
+    horizons: Sequence[int] = (7, 28, 56),
+    rules: Dict = BIAS_TEST_RULES,
+) -> pd.DataFrame:
+    """Apply BIAS_TEST_RULES to each candidate against `base`. Run `--calibrate` with every model first."""
+    b = _calibrated_rows(out_dir, base, horizons).set_index(["election", "horizon"])
+    out = []
+    for c in candidates:
+        a = _calibrated_rows(out_dir, c, horizons).set_index(["election", "horizon"])
+        common = a.index.intersection(b.index)
+        diff = (a.loc[common, "nat_crps"] - b.loc[common, "nat_crps"]).rename("d").reset_index()
+        seat = (a.loc[common, "seat_rps"] - b.loc[common, "seat_rps"]).mean()
+        per_election = diff.groupby("election").d.mean()
+        per_horizon = diff.groupby("horizon").d.mean()
+        pooled_gain = -diff.d.mean() / b.loc[common, "nat_crps"].mean()
+        drop_one = max(per_election.drop(e).mean() for e in per_election.index)
+        p = sign_flip_p(per_election.values)
+        checks = {
+            "pooled_gain": pooled_gain >= rules["min_pooled_gain"],
+            "elections_won": int((per_election < 0).sum()) >= rules["min_elections_won"],
+            "drop_one": (drop_one < 0) if rules["drop_one"] else True,
+            "every_horizon": bool((per_horizon <= 0).all()) if rules["every_horizon"] else True,
+            "seat_rps": (seat <= 0) if rules["seat_rps_no_worse"] else True,
+            "sign_flip_p": p <= rules["max_sign_flip_p"],
+        }
+        row = {
+            "candidate": c,
+            "pooled_gain_pct": round(100 * pooled_gain, 2),
+            "elections_won": f"{int((per_election < 0).sum())}/{len(per_election)}",
+            "worst_drop_one_diff": round(drop_one, 4),
+            "seat_rps_diff": round(seat, 4),
+            "sign_flip_p": round(p, 4),
+            **{f"h{h}_diff": round(v, 4) for h, v in per_horizon.items()},
+            **{f"{str(e)[:4]}": round(v, 4) for e, v in per_election.items()},
+            **{f"ok_{k}": bool(v) for k, v in checks.items()},
+            "adopt": all(checks.values()),
+        }
+        out.append(row)
+    res = pd.DataFrame(out)
+    res.to_csv(os.path.join(out_dir, "bias_test_verdict.csv"), index=False)
+    return res
+
+
 def compare(out_dir: str, a: str, b: str, metrics: Sequence[str] = PAIRED_METRICS) -> pd.DataFrame:
     """Per-election differences a - b (negative: a is better) for each horizon and metric.
 
@@ -840,9 +1002,18 @@ def main(argv=None):
     )
     ap.add_argument("--rescore-districts", metavar="DIR", help="rescore blend-swing variants from saved draws")
     ap.add_argument("--compare", nargs=3, metavar=("DIR", "A", "B"), help="per-election differences A - B")
+    ap.add_argument("--late-swing", metavar="DIR", help="derive rw_nobias_lateswing (bias test M3) from saved rw_nobias draws")
+    ap.add_argument("--bias-verdict", metavar="DIR", help="apply BIAS_TEST_RULES after --calibrate")
     args = ap.parse_args(argv)
     global SEAT_MAP
     SEAT_MAP = args.seat_map
+    if args.late_swing:
+        print("\n".join(derive_late_swing(args.late_swing)))
+        return
+    if args.bias_verdict:
+        pd.set_option("display.width", 250)
+        print(bias_test_verdict(args.bias_verdict).T.to_string())
+        return
     if args.compare:
         pd.set_option("display.width", 250)
         print(compare(*args.compare).round(3).to_string(index=False))

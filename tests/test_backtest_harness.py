@@ -124,3 +124,86 @@ def test_loo_tau_rules_and_calibration_gate():
     # coverage 0.8 sits on the gate's lower edge, so the CRPS pick passes too; one notch less fails
     d.loc[d.tau == 0.1, "nat_cov90_polled"] = 0.79
     assert not calibration_verdict(loo_tau(d, "crps"), d[d.tau == 0])["pass"]
+
+
+def test_momentum_bias_reads_movement_since_the_last_result():
+    from src.models.poll_rw_model import momentum_weights
+
+    data = prepare_rw_data(_toy_polls(), _toy_results(), "2020-03-01", ["2019-10-06"], PARTIES, RWConfig())
+    first, second = data.poll_cycle == 0, data.poll_cycle == 1
+    assert first.any() and second.any()
+    assert (data.poll_prev_result_t[first] == -1).all()  # no result before the first cycle
+    assert (data.poll_prev_result_t[second] == data.result_t[0]).all()
+    w = momentum_weights(data)
+    assert (w[first] == 0).all()
+    assert w[second][:, PARTIES.index("CH")].all()  # Chega existed at the 2019 result
+    assert not w[:, PARTIES.index("IL")].any()  # IL never existed
+    model = build_rw_model(data, RWConfig(bias_sd_prior=1e-3, momentum_bias_sd=0.2))
+    assert "momentum_beta" in model.named_vars
+    assert np.isfinite(model.compile_logp()(model.initial_point()))
+    assert "momentum_beta" not in build_rw_model(data, RWConfig()).named_vars  # off by default
+
+
+def test_sign_flip_p_is_exact():
+    from src.evaluation.backtest import sign_flip_p
+
+    assert sign_flip_p(-np.ones(6)) == pytest.approx(2 / 64)  # the smallest six elections allow
+    assert sign_flip_p(np.array([-1.0, 1.0, -1.0, 1.0])) == 1.0
+
+
+def _write_calibration(tmp_path, crps_by_model, seat_by_model):
+    rows = []
+    for h in (7, 28, 56):
+        for model, crps in crps_by_model.items():
+            for i, c in enumerate(crps):
+                for tau, cov in [(0.1, 0.9), (0.2, 0.95)]:
+                    rows.append(dict(model=model, form="iid", election=f"e{i}", horizon=h, tau=tau, nat_crps=c,
+                                     nat_cov90_polled=cov, seat_rps=seat_by_model[model]))
+    df = pd.DataFrame(rows)
+    for h in (7, 28, 56):
+        df[df.horizon == h].to_csv(tmp_path / f"polling_error_h{h:03d}.csv", index=False)
+
+
+def test_bias_test_verdict_applies_the_rules(tmp_path):
+    from src.evaluation.backtest import bias_test_verdict
+
+    base = [1.0, 1.2, 0.9, 1.1, 1.3, 1.0]
+    good = [c * 0.9 for c in base]  # 10% better everywhere
+    mixed = [0.8, 1.3, 0.8, 1.2, 1.2, 1.1]  # better in 3 of 6
+    _write_calibration(tmp_path, {"m0": base, "good": good, "mixed": mixed}, {"m0": 3.0, "good": 2.9, "mixed": 3.0})
+    v = bias_test_verdict(str(tmp_path), base="m0", candidates=["good", "mixed"]).set_index("candidate")
+    assert v.loc["good", "adopt"] and v.loc["good", "elections_won"] == "6/6"
+    assert v.loc["good", "sign_flip_p"] == pytest.approx(2 / 64, abs=1e-4)
+    assert not v.loc["mixed", "adopt"] and not v.loc["mixed", "ok_elections_won"]
+    assert (tmp_path / "bias_test_verdict.csv").exists()
+
+
+def test_derive_late_swing_learns_from_the_other_elections(tmp_path):
+    from src.evaluation.backtest import PARTIES as BT_PARTIES, derive_late_swing, load_truth
+
+    _, national, _ = load_truth()
+    rng = np.random.default_rng(0)
+    ad = BT_PARTIES.index("AD")
+    elections = ["2015-10-04", "2019-10-06", "2022-01-30"]
+    for E in elections:
+        s = national[pd.Timestamp(E)].reindex(BT_PARTIES).fillna(0).to_numpy(float)
+        s = s / s.sum()
+        for h, ad_factor in [(7, 1.0), (28, 0.9)]:  # AD 10% lower four weeks out in every election
+            t = s.copy()
+            t[ad] *= ad_factor
+            t /= t.sum()
+            draws = rng.dirichlet(20000 * t + 1e-3, size=200)
+            np.save(tmp_path / f"rw_nobias__{E}__h{h:03d}__national.npy", draws.astype(np.float32))
+    tags = derive_late_swing(str(tmp_path))
+    assert len(tags) == 6
+    for E in elections:
+        base7 = np.load(tmp_path / f"rw_nobias__{E}__h007__national.npy")
+        np.testing.assert_allclose(np.load(tmp_path / f"rw_nobias_lateswing__{E}__h007__national.npy"), base7, rtol=1e-5)
+        import json
+
+        offset = json.load(open(tmp_path / f"rw_nobias_lateswing__{E}__h028.json"))["extra"]["late_swing_log_offset"]
+        assert offset["AD"] > 0.05  # learned from the two other elections
+        shifted = np.load(tmp_path / f"rw_nobias_lateswing__{E}__h028__national.npy")
+        base28 = np.load(tmp_path / f"rw_nobias__{E}__h028__national.npy")
+        assert np.median(shifted[:, ad]) > np.median(base28[:, ad])
+        np.testing.assert_allclose(shifted.sum(1), 1.0, atol=1e-5)
