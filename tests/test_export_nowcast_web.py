@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from src.export_nowcast_web import REQUIRED, ExportRefused, check_run, national_rows, polls_since, seat_draws
+from src.export_nowcast_web import REQUIRED, ExportRefused, attach_vote_shares, check_run, national_rows, polls_since, seat_draws
 
 PARTIES = ["PS", "CH", "AD"]
 
@@ -98,3 +98,33 @@ def test_polls_since_keeps_only_polls_after_the_election_as_published(tmp_path):
     assert polls[0]["pollster"] == "Intercampus"
     assert polls[0]["shares"]["PS"] == pytest.approx(0.282)
     assert "JPP" not in polls[0]["shares"]
+
+
+def test_vote_shares_follow_each_seat_draw():
+    import numpy as np
+
+    nat = np.array([[0.30, 0.20, 0.50], [0.25, 0.35, 0.40], [0.40, 0.10, 0.50]])
+    seats = [
+        {"PS": 70, "CH": 50, "AD": 110, "original_sample_id": 0},
+        {"PS": 60, "CH": 80, "AD": 90, "original_sample_id": 1},
+        {"PS": 90, "CH": 20, "AD": 120, "original_sample_id": 2},
+    ]
+    out = attach_vote_shares(seats, nat, ["PS", "CH", "AD"])
+    assert out[1]["vote"] == {"PS": 0.25, "CH": 0.35, "AD": 0.4}
+    assert out[0]["PS"] == 70
+
+
+def test_vote_shares_refuse_misaligned_draws():
+    import numpy as np
+
+    nat = np.array([[0.30, 0.10, 0.60], [0.25, 0.35, 0.40], [0.40, 0.20, 0.40]])
+    # Chega's seats run against its votes: the rows point at the wrong draws.
+    seats = [
+        {"PS": 70, "CH": 90, "AD": 70, "original_sample_id": 0},
+        {"PS": 60, "CH": 20, "AD": 150, "original_sample_id": 1},
+        {"PS": 90, "CH": 50, "AD": 90, "original_sample_id": 2},
+    ]
+    with pytest.raises(ExportRefused, match="misaligned"):
+        attach_vote_shares(seats, nat, ["PS", "CH", "AD"])
+    with pytest.raises(ExportRefused, match="point at"):
+        attach_vote_shares([{"PS": 1, "original_sample_id": 9}], nat, ["PS", "CH", "AD"])

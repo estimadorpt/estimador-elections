@@ -104,6 +104,26 @@ def seat_draws(run_dir: str, parties: list[str]) -> list[dict]:
     return draws
 
 
+def attach_vote_shares(seats: list[dict], nat, parties: list[str], check_party: str = "CH") -> list[dict]:
+    """Each seat draw's national vote shares (the draw it came from, `original_sample_id`), on the
+    eight-party base, so the page can draw the simulations by vote and colour them by seats.
+    Refuses when the rows and the draws do not line up (a party's seats must follow its votes)."""
+    n = nat.shape[0]
+    ids = [int(row["original_sample_id"]) for row in seats]
+    if max(ids) >= n or min(ids) < 0:
+        raise ExportRefused(f"seat draws point at national draw {max(ids)}, there are {n}")
+    if check_party in parties:
+        j = parties.index(check_party)
+        votes = np.array([nat[k, j] for k in ids], dtype=float)
+        won = np.array([float(row.get(check_party, 0)) for row in seats])
+        if votes.std() > 0 and won.std() > 0 and np.corrcoef(votes, won)[0, 1] < 0.8:
+            raise ExportRefused(f"{check_party}'s seats do not follow its votes in the draws: rows and national draws are misaligned")
+    out = []
+    for row, k in zip(seats, ids):
+        out.append({**row, "vote": {p: round(float(nat[k, i]), 4) for i, p in enumerate(parties)}})
+    return out
+
+
 def national_rows(run_dir: str, parties: list[str]) -> list[dict]:
     summary = pd.read_csv(os.path.join(run_dir, "national_summary.csv")).set_index("party")
     if sorted(summary.index) != sorted(parties):
@@ -260,6 +280,7 @@ def build(run_dir: str, code_dir: str = ".", fit_code: Optional[str] = None) -> 
 
     parties = [str(p) for p in PARTIES]
     seats = seat_draws(run_dir, parties)
+    seats = attach_vote_shares(seats, np.load(os.path.join(run_dir, "national_draws.npy")), parties)
     national = national_rows(run_dir, parties)
     polls = polls_since(run_dir, previous)
     model_count = int(run.get("n_polls_since_last_election", -1))
