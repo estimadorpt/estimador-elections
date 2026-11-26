@@ -105,6 +105,12 @@ with `pixi run nowcast`; once an election is called, `pixi run forecast <YYYY-MM
 check the gate on every value in `run.json`: rename the folder `ACCEPTED_` only when it passes. Set
 `ESTIMADOR_WIKIPEDIA_POLLS` to the poll feed's CSV, and pass `--as-of` to freeze the input date.
 
+The nowcast is live on estimador.pt (`/eleicoes/proximas-legislativas`). `scripts/nowcast_daily.sh`,
+run hourly by launchd (`ops/launchd/pt.estimador.nowcast.plist`) from the dedicated checkout
+`~/code/estimador-elections-live`, refits when the poll feed holds new polls, renames the run
+`ACCEPTED_` only when the gate passes, exports it with `src/export_nowcast_web.py` and pushes the
+data to estimador-web's main. The runbook is `docs/live_nowcast.md`.
+
 The earlier GP model stays for comparison: `pixi run train` (placeholder date 2029-10-07, far
 enough out to keep its 90-day campaign GP out of the fit), `pixi run predict` and `pixi run nowcast-gp`.
 
